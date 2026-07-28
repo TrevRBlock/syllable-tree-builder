@@ -1,0 +1,29 @@
+SYLLABLE TREE BUILDER — START HERE
+
+Repository name:
+syllable-tree-builder
+
+1. Extract the ZIP.
+2. In GitHub Desktop, create a repository named:
+   syllable-tree-builder
+3. Leave README, Git ignore, and license initialization unchecked.
+4. Open the new repository folder:
+   Repository → Show in Explorer
+5. Copy every file from the extracted syllable-tree-builder folder into the repository folder.
+6. Confirm package.json is directly inside the repository folder.
+7. Click the Explorer address bar, type cmd, and press Enter.
+8. Run:
+   npm.cmd install
+9. Confirm package-lock.json was created.
+10. Run:
+    npm.cmd run dev
+11. Test the production build:
+    npm.cmd run build
+12. Commit every file, including package-lock.json.
+13. Publish the repository through GitHub Desktop.
+14. On GitHub:
+    Settings → Pages → Source → GitHub Actions
+15. Push changes.
+
+Published address:
+https://YOUR-USERNAME.github.io/syllable-tree-builder/
