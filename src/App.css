@@ -730,20 +730,48 @@ button {
   border-color: var(--navy);
 }
 
-/* Smooth canvas updates and new-node entry. */
-.tree-canvas line,
-.tree-canvas circle,
-.tree-canvas rect,
-.tree-canvas text,
+/* Canvas movement and layout feedback. */
+.tree-canvas line {
+  transition:
+    x1 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    y1 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    x2 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    y2 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    stroke 180ms ease,
+    opacity 180ms ease;
+}
+
+.tree-canvas circle {
+  transition:
+    cx 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    cy 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    r 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    fill 180ms ease,
+    stroke 180ms ease,
+    opacity 180ms ease;
+}
+
+.tree-canvas text {
+  transition:
+    x 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    y 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    fill 180ms ease,
+    opacity 180ms ease;
+}
+
 .tree-canvas foreignObject {
   transition:
-    all 340ms
-    cubic-bezier(
-      0.22,
-      1,
-      0.36,
-      1
-    );
+    x 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    y 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 180ms ease;
+}
+
+[data-motion-id] {
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform, opacity;
 }
 
 .animated-tree-column {
@@ -848,6 +876,63 @@ button {
 
   .ipa-chart-row {
     grid-template-columns: 115px minmax(620px, 1fr);
+  }
+}
+
+.sound-flight-clone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  line-height: 1;
+  text-align: center;
+  user-select: none;
+  transform-origin: top left;
+}
+
+.sound-drag-source {
+  opacity: 0.4;
+  transform: scale(0.96);
+  filter: saturate(0.65);
+}
+
+.sound-just-landed {
+  animation:
+    sound-landed
+    500ms
+    cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sound-drop-before,
+.sound-drop-after {
+  animation:
+    insertion-marker-pulse
+    520ms ease-in-out infinite alternate;
+}
+
+@keyframes sound-landed {
+  0% {
+    transform: scale(0.78);
+    filter: brightness(1.28);
+  }
+
+  58% {
+    transform: scale(1.1);
+  }
+
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
+@keyframes insertion-marker-pulse {
+  from {
+    filter: brightness(1);
+  }
+
+  to {
+    filter: brightness(1.18);
   }
 }
 
@@ -1034,4 +1119,40 @@ button {
       42px
       42px;
   }
+}
+
+
+.terminal-input[draggable="true"],
+.shared-input[draggable="true"] {
+  cursor: grab;
+}
+
+.terminal-input[draggable="true"]:active,
+.shared-input[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+
+.terminal-input.sound-drop-before {
+  box-shadow:
+    -7px 0 0 var(--mustard),
+    0 0 0 3px
+    rgba(217, 154, 43, 0.16);
+}
+
+.terminal-input.sound-drop-after {
+  box-shadow:
+    7px 0 0 var(--mustard),
+    0 0 0 3px
+    rgba(217, 154, 43, 0.16);
+}
+
+.terminal-input.plain.sound-drop-before {
+  box-shadow:
+    -6px 0 0 #111111;
+}
+
+.terminal-input.plain.sound-drop-after {
+  box-shadow:
+    6px 0 0 #111111;
 }

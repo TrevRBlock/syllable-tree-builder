@@ -1,10 +1,12 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import type {
+  DragEvent as ReactDragEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
 import "./App.css";
@@ -48,6 +50,42 @@ type ActiveSound =
       syllableId: string;
     }
   | null;
+
+type SoundDragSource =
+  Exclude<ActiveSound, null>;
+
+type SoundDropTarget = {
+  syllableId: string;
+  field: SegmentField;
+  insertionIndex?: number;
+  anchorIndex?: number;
+  position?: "before" | "after";
+} | null;
+
+interface MotionRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+interface SoundFlightSnapshot {
+  rect: MotionRect;
+  value: string;
+  color: string;
+  backgroundColor: string;
+  borderColor: string;
+  borderRadius: string;
+  fontFamily: string;
+  fontSize: string;
+  fontWeight: string;
+  fontStyle: string;
+}
+
+interface PendingSoundFlight
+  extends SoundFlightSnapshot {
+  targetLocation: string;
+}
 
 type BranchKind =
   | "onset"
@@ -164,7 +202,24 @@ interface CanvasLayout {
 }
 
 const STORAGE_KEY =
-  "syllable-tree-builder-state-v12";
+  "syllable-tree-builder-state-v15";
+
+const SOUND_DRAG_DATA_TYPE =
+  "application/x-syllable-sound";
+
+function getSoundLocationKey(
+  syllableId: string,
+  field: SegmentField,
+  index: number,
+): string {
+  return `segment:${syllableId}:${field}:${index}`;
+}
+
+function getSharedLocationKey(
+  syllableId: string,
+): string {
+  return `shared:${syllableId}`;
+}
 
 const defaultTreeColors: TreeColors = {
   canvasBackground: "#fffdf9",
@@ -1495,6 +1550,27 @@ function App() {
   );
 
   const [
+    soundDragSource,
+    setSoundDragSource,
+  ] = useState<SoundDragSource | null>(
+    null,
+  );
+
+  const [
+    soundDropTarget,
+    setSoundDropTarget,
+  ] = useState<SoundDropTarget>(
+    null,
+  );
+
+  const [
+    landedSoundLocation,
+    setLandedSoundLocation,
+  ] = useState<string | null>(
+    null,
+  );
+
+  const [
     replaceOnNextIpa,
     setReplaceOnNextIpa,
   ] = useState(false);
@@ -1541,6 +1617,29 @@ function App() {
 
   const canvasScrollRef =
     useRef<HTMLDivElement | null>(
+      null,
+    );
+
+  const motionRectsRef =
+    useRef<Map<string, MotionRect>>(
+      new Map(),
+    );
+
+  const motionReadyRef =
+    useRef(false);
+
+  const soundFlightStartRef =
+    useRef<SoundFlightSnapshot | null>(
+      null,
+    );
+
+  const pendingSoundFlightRef =
+    useRef<PendingSoundFlight | null>(
+      null,
+    );
+
+  const landingTimerRef =
+    useRef<number | null>(
       null,
     );
 
@@ -1702,6 +1801,272 @@ function App() {
         ) ?? fontOptions[0],
       [fontFamily],
     );
+
+  useLayoutEffect(() => {
+    const svg = svgRef.current;
+
+    if (!svg) {
+      return;
+    }
+
+    const elements = Array.from(
+      svg.querySelectorAll<SVGElement>(
+        "[data-motion-id]",
+      ),
+    );
+
+    const nextRects =
+      new Map<string, MotionRect>();
+
+    elements.forEach((element) => {
+      const id =
+        element.getAttribute(
+          "data-motion-id",
+        );
+
+      if (!id) {
+        return;
+      }
+
+      const rect =
+        element.getBoundingClientRect();
+
+      const current: MotionRect = {
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+      };
+
+      nextRects.set(id, current);
+
+      if (!motionReadyRef.current) {
+        return;
+      }
+
+      const previous =
+        motionRectsRef.current.get(id);
+
+      if (!previous) {
+        element.animate(
+          [
+            {
+              transform:
+                "translateY(-9px) scale(0.9)",
+              opacity: 0,
+            },
+            {
+              transform:
+                "translateY(0) scale(1)",
+              opacity: 1,
+            },
+          ],
+          {
+            duration: 300,
+            easing:
+              "cubic-bezier(0.22, 1, 0.36, 1)",
+          },
+        );
+        return;
+      }
+
+      const deltaX =
+        previous.left -
+        current.left;
+      const deltaY =
+        previous.top -
+        current.top;
+
+      if (
+        Math.abs(deltaX) < 0.75 &&
+        Math.abs(deltaY) < 0.75
+      ) {
+        return;
+      }
+
+      element.animate(
+        [
+          {
+            transform: `translate(${deltaX}px, ${deltaY}px)`,
+            opacity: 0.9,
+          },
+          {
+            transform:
+              "translate(0, 0)",
+            opacity: 1,
+          },
+        ],
+        {
+          duration: 430,
+          easing:
+            "cubic-bezier(0.22, 1, 0.36, 1)",
+        },
+      );
+    });
+
+    motionRectsRef.current =
+      nextRects;
+    motionReadyRef.current = true;
+
+    const pending =
+      pendingSoundFlightRef.current;
+
+    if (!pending) {
+      return;
+    }
+
+    pendingSoundFlightRef.current =
+      null;
+
+    window.requestAnimationFrame(() => {
+      const target = Array.from(
+        svg.querySelectorAll<SVGElement>(
+          "[data-sound-location]",
+        ),
+      ).find(
+        (element) =>
+          element.getAttribute(
+            "data-sound-location",
+          ) ===
+          pending.targetLocation,
+      );
+
+      if (!target) {
+        return;
+      }
+
+      const targetRect =
+        target.getBoundingClientRect();
+      const clone =
+        document.createElement("div");
+
+      clone.className =
+        "sound-flight-clone";
+      clone.textContent =
+        pending.value;
+
+      Object.assign(
+        clone.style,
+        {
+          position: "fixed",
+          left: `${pending.rect.left}px`,
+          top: `${pending.rect.top}px`,
+          width: `${pending.rect.width}px`,
+          height: `${pending.rect.height}px`,
+          color: pending.color,
+          backgroundColor:
+            pending.backgroundColor,
+          borderColor:
+            pending.borderColor,
+          borderStyle: "solid",
+          borderWidth: "1px",
+          borderRadius:
+            pending.borderRadius,
+          fontFamily:
+            pending.fontFamily,
+          fontSize: pending.fontSize,
+          fontWeight:
+            pending.fontWeight,
+          fontStyle:
+            pending.fontStyle,
+          pointerEvents: "none",
+          zIndex: "9999",
+        },
+      );
+
+      document.body.appendChild(
+        clone,
+      );
+
+      const deltaX =
+        targetRect.left -
+        pending.rect.left;
+      const deltaY =
+        targetRect.top -
+        pending.rect.top;
+      const scaleX =
+        targetRect.width /
+        Math.max(
+          1,
+          pending.rect.width,
+        );
+      const scaleY =
+        targetRect.height /
+        Math.max(
+          1,
+          pending.rect.height,
+        );
+
+      const animation =
+        clone.animate(
+          [
+            {
+              transform:
+                "translate(0, 0) scale(1)",
+              opacity: 0.98,
+              filter:
+                "drop-shadow(0 8px 10px rgba(36,49,63,0.22))",
+            },
+            {
+              transform: `translate(${deltaX}px, ${deltaY}px) scale(${scaleX}, ${scaleY})`,
+              opacity: 0.16,
+              filter:
+                "drop-shadow(0 0 0 rgba(36,49,63,0))",
+            },
+          ],
+          {
+            duration: 420,
+            easing:
+              "cubic-bezier(0.22, 1, 0.36, 1)",
+          },
+        );
+
+      animation.onfinish = () => {
+        clone.remove();
+        setLandedSoundLocation(
+          pending.targetLocation,
+        );
+
+        if (
+          landingTimerRef.current !==
+          null
+        ) {
+          window.clearTimeout(
+            landingTimerRef.current,
+          );
+        }
+
+        landingTimerRef.current =
+          window.setTimeout(
+            () =>
+              setLandedSoundLocation(
+                null,
+              ),
+            520,
+          );
+      };
+    });
+  }, [
+    layout,
+    syllables,
+    zoom,
+    treeFontSize,
+    plainStyle,
+    fontFamily,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (
+        landingTimerRef.current !==
+        null
+      ) {
+        window.clearTimeout(
+          landingTimerRef.current,
+        );
+      }
+    };
+  }, []);
 
   const canUndo =
     historyVersion >= 0 &&
@@ -2323,6 +2688,527 @@ function App() {
 
     setActiveSound(null);
     setIpaOpen(false);
+  }
+
+  function readSoundDragSource(
+    event: ReactDragEvent<Element>,
+  ): SoundDragSource | null {
+    if (soundDragSource) {
+      return soundDragSource;
+    }
+
+    try {
+      const raw =
+        event.dataTransfer.getData(
+          SOUND_DRAG_DATA_TYPE,
+        );
+
+      if (!raw) {
+        return null;
+      }
+
+      const parsed = JSON.parse(
+        raw,
+      ) as SoundDragSource;
+
+      if (
+        parsed.type === "shared" &&
+        typeof parsed.syllableId ===
+          "string"
+      ) {
+        return parsed;
+      }
+
+      if (
+        parsed.type === "segment" &&
+        typeof parsed.syllableId ===
+          "string" &&
+        [
+          "onset",
+          "nucleus",
+          "coda",
+        ].includes(parsed.field) &&
+        Number.isInteger(
+          parsed.index,
+        )
+      ) {
+        return parsed;
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
+
+  function startSoundDrag(
+    event: ReactDragEvent<HTMLInputElement>,
+    source: SoundDragSource,
+    value: string,
+  ) {
+    if (!value.trim()) {
+      event.preventDefault();
+      setStatus(
+        "Add an IPA symbol before moving this sound box.",
+      );
+      return;
+    }
+
+    event.stopPropagation();
+
+    const sourceRect =
+      event.currentTarget.getBoundingClientRect();
+    const sourceStyle =
+      window.getComputedStyle(
+        event.currentTarget,
+      );
+
+    soundFlightStartRef.current = {
+      rect: {
+        left: sourceRect.left,
+        top: sourceRect.top,
+        width: sourceRect.width,
+        height: sourceRect.height,
+      },
+      value,
+      color: sourceStyle.color,
+      backgroundColor:
+        sourceStyle.backgroundColor,
+      borderColor:
+        sourceStyle.borderColor,
+      borderRadius:
+        sourceStyle.borderRadius,
+      fontFamily:
+        sourceStyle.fontFamily,
+      fontSize: sourceStyle.fontSize,
+      fontWeight:
+        sourceStyle.fontWeight,
+      fontStyle:
+        sourceStyle.fontStyle,
+    };
+
+    event.dataTransfer.effectAllowed =
+      "move";
+    event.dataTransfer.setData(
+      SOUND_DRAG_DATA_TYPE,
+      JSON.stringify(source),
+    );
+    event.dataTransfer.setData(
+      "text/plain",
+      value,
+    );
+    setSoundDragSource(source);
+    setSoundDropTarget(null);
+    setStatus(
+      "Drop onto O, N, or C, or place it left/right of another sound box.",
+    );
+  }
+
+  function finishSoundDrag() {
+    setSoundDragSource(null);
+    setSoundDropTarget(null);
+    soundFlightStartRef.current =
+      null;
+  }
+
+  function handleSoundDragOver<
+    T extends Element,
+  >(
+    event: ReactDragEvent<T>,
+    syllableId: string,
+    field: SegmentField,
+  ) {
+    if (
+      !soundDragSource &&
+      !event.dataTransfer.types.includes(
+        SOUND_DRAG_DATA_TYPE,
+      )
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect =
+      "move";
+    setSoundDropTarget({
+      syllableId,
+      field,
+    });
+  }
+
+  function getSoundBoxDropPosition(
+    event: ReactDragEvent<HTMLInputElement>,
+    targetIndex: number,
+  ) {
+    const rect =
+      event.currentTarget.getBoundingClientRect();
+
+    const position =
+      event.clientX <
+      rect.left + rect.width / 2
+        ? "before"
+        : "after";
+
+    return {
+      position,
+      insertionIndex:
+        targetIndex +
+        (position === "after"
+          ? 1
+          : 0),
+    } as const;
+  }
+
+  function handleSoundBoxDragOver(
+    event: ReactDragEvent<HTMLInputElement>,
+    targetSyllableId: string,
+    targetField: SegmentField,
+    targetIndex: number,
+  ) {
+    if (
+      !soundDragSource &&
+      !event.dataTransfer.types.includes(
+        SOUND_DRAG_DATA_TYPE,
+      )
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect =
+      "move";
+
+    const dropPosition =
+      getSoundBoxDropPosition(
+        event,
+        targetIndex,
+      );
+
+    setSoundDropTarget({
+      syllableId:
+        targetSyllableId,
+      field: targetField,
+      anchorIndex:
+        targetIndex,
+      position:
+        dropPosition.position,
+      insertionIndex:
+        dropPosition.insertionIndex,
+    });
+  }
+
+  function handleSoundBoxDrop(
+    event: ReactDragEvent<HTMLInputElement>,
+    targetSyllableId: string,
+    targetField: SegmentField,
+    targetIndex: number,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const source =
+      readSoundDragSource(
+        event,
+      );
+
+    if (!source) {
+      finishSoundDrag();
+      return;
+    }
+
+    const dropPosition =
+      getSoundBoxDropPosition(
+        event,
+        targetIndex,
+      );
+
+    moveSoundToBranch(
+      source,
+      targetSyllableId,
+      targetField,
+      dropPosition.insertionIndex,
+    );
+
+    finishSoundDrag();
+  }
+
+  function moveSoundToBranch(
+    source: SoundDragSource,
+    targetSyllableId: string,
+    targetField: SegmentField,
+    requestedInsertionIndex?: number,
+  ) {
+    const sameBranch =
+      source.type === "segment" &&
+      source.syllableId ===
+        targetSyllableId &&
+      source.field === targetField;
+
+    if (
+      sameBranch &&
+      requestedInsertionIndex ===
+        undefined
+    ) {
+      setStatus(
+        "Drop to the left or right of another box to reorder this branch.",
+      );
+      return;
+    }
+
+    const sourceSyllable =
+      syllables.find(
+        (syllable) =>
+          syllable.id ===
+          source.syllableId,
+      );
+
+    if (!sourceSyllable) {
+      setStatus(
+        "The source sound could not be found.",
+      );
+      return;
+    }
+
+    const soundValue =
+      source.type === "shared"
+        ? sourceSyllable.sharedToNext
+        : sourceSyllable[
+            source.field
+          ][source.index] ?? "";
+
+    if (!soundValue.trim()) {
+      setStatus(
+        "Blank sound boxes cannot be moved.",
+      );
+      return;
+    }
+
+    const targetSyllable =
+      syllables.find(
+        (syllable) =>
+          syllable.id ===
+          targetSyllableId,
+      );
+
+    if (!targetSyllable) {
+      setStatus(
+        "The destination branch could not be found.",
+      );
+      return;
+    }
+
+    const targetValues =
+      targetSyllable[targetField];
+
+    const replacesBlankTarget =
+      targetValues.length === 1 &&
+      !targetValues[0].trim();
+
+    let targetIndex =
+      replacesBlankTarget
+        ? 0
+        : Math.min(
+            targetValues.length,
+            Math.max(
+              0,
+              requestedInsertionIndex ??
+                targetValues.length,
+            ),
+          );
+
+    if (
+      sameBranch &&
+      source.type === "segment" &&
+      source.index < targetIndex
+    ) {
+      targetIndex -= 1;
+    }
+
+    if (
+      sameBranch &&
+      source.type === "segment" &&
+      targetIndex === source.index
+    ) {
+      setStatus(
+        "The sound box is already in that position.",
+      );
+      return;
+    }
+
+    if (soundFlightStartRef.current) {
+      pendingSoundFlightRef.current = {
+        ...soundFlightStartRef.current,
+        value: soundValue,
+        targetLocation:
+          getSoundLocationKey(
+            targetSyllableId,
+            targetField,
+            targetIndex,
+          ),
+      };
+    }
+
+    setSyllables(
+      (previous) => {
+        const next =
+          cloneSyllables(previous);
+
+        const nextSource =
+          next.find(
+            (syllable) =>
+              syllable.id ===
+              source.syllableId,
+          );
+
+        const nextTarget =
+          next.find(
+            (syllable) =>
+              syllable.id ===
+              targetSyllableId,
+          );
+
+        if (
+          !nextSource ||
+          !nextTarget
+        ) {
+          return previous;
+        }
+
+        if (
+          source.type === "shared"
+        ) {
+          nextSource.sharedToNext =
+            "";
+        } else {
+          const sourceValues =
+            nextSource[source.field];
+
+          sourceValues.splice(
+            source.index,
+            1,
+          );
+
+          if (
+            source.field ===
+              "nucleus" &&
+            sourceValues.length === 0
+          ) {
+            sourceValues.push("");
+          }
+
+          if (
+            source.field ===
+            "onset"
+          ) {
+            nextSource.hasOnset =
+              sourceValues.length > 0;
+          }
+
+          if (
+            source.field ===
+            "coda"
+          ) {
+            nextSource.hasCoda =
+              sourceValues.length > 0;
+          }
+        }
+
+        const destinationValues =
+          nextTarget[targetField];
+
+        if (
+          destinationValues.length ===
+            1 &&
+          !destinationValues[0].trim()
+        ) {
+          destinationValues[0] =
+            soundValue;
+        } else {
+          const safeTargetIndex =
+            Math.min(
+              destinationValues.length,
+              Math.max(
+                0,
+                targetIndex,
+              ),
+            );
+
+          destinationValues.splice(
+            safeTargetIndex,
+            0,
+            soundValue,
+          );
+        }
+
+        if (
+          targetField === "onset"
+        ) {
+          nextTarget.hasOnset = true;
+        }
+
+        if (
+          targetField === "coda"
+        ) {
+          nextTarget.hasCoda = true;
+        }
+
+        return normalizeSyllables(
+          next,
+        );
+      },
+    );
+
+    setSelectedItem({
+      type: "segment",
+      syllableId:
+        targetSyllableId,
+      field: targetField,
+      index: targetIndex,
+    });
+    setActiveSound({
+      type: "segment",
+      syllableId:
+        targetSyllableId,
+      field: targetField,
+      index: targetIndex,
+    });
+    setReplaceOnNextIpa(true);
+    setIpaOpen(true);
+    setStatus(
+      sameBranch
+        ? `Reordered ${soundValue} within ${targetField}.`
+        : `Moved ${soundValue} to ${targetField}.`,
+    );
+  }
+
+  function handleSoundDrop<
+    T extends Element,
+  >(
+    event: ReactDragEvent<T>,
+    targetSyllableId: string,
+    targetField: SegmentField,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const source =
+      readSoundDragSource(
+        event as ReactDragEvent<Element>,
+      );
+
+    if (!source) {
+      finishSoundDrag();
+      return;
+    }
+
+    moveSoundToBranch(
+      source,
+      targetSyllableId,
+      targetField,
+    );
+    finishSoundDrag();
   }
 
   function removeBranch(
@@ -3683,6 +4569,47 @@ function App() {
       selectedItem.index ===
         index;
 
+    const dropBefore =
+      soundDropTarget?.syllableId ===
+        syllable.id &&
+      soundDropTarget.field ===
+        field &&
+      soundDropTarget.anchorIndex ===
+        index &&
+      soundDropTarget.position ===
+        "before";
+
+    const dropAfter =
+      soundDropTarget?.syllableId ===
+        syllable.id &&
+      soundDropTarget.field ===
+        field &&
+      soundDropTarget.anchorIndex ===
+        index &&
+      soundDropTarget.position ===
+        "after";
+
+    const soundLocation =
+      getSoundLocationKey(
+        syllable.id,
+        field,
+        index,
+      );
+
+    const dragging =
+      soundDragSource?.type ===
+        "segment" &&
+      soundDragSource.syllableId ===
+        syllable.id &&
+      soundDragSource.field ===
+        field &&
+      soundDragSource.index ===
+        index;
+
+    const justLanded =
+      landedSoundLocation ===
+      soundLocation;
+
     return (
       <foreignObject
         key={`${syllable.id}-${field}-${index}`}
@@ -3698,6 +4625,12 @@ function App() {
         height={terminalHeight}
         data-x={String(x)}
         data-y={String(y)}
+        data-motion-id={
+          `sound-box-${soundLocation}`
+        }
+        data-sound-location={
+          soundLocation
+        }
         data-export-label={
           value || "∅"
         }
@@ -3741,6 +4674,22 @@ function App() {
               ? "selected"
               : ""
           } ${
+            dragging
+              ? "sound-drag-source"
+              : ""
+          } ${
+            justLanded
+              ? "sound-just-landed"
+              : ""
+          } ${
+            dropBefore
+              ? "sound-drop-before"
+              : ""
+          } ${
+            dropAfter
+              ? "sound-drop-after"
+              : ""
+          } ${
             plainStyle
               ? "plain"
               : ""
@@ -3748,6 +4697,42 @@ function App() {
           value={value}
           placeholder="∅"
           aria-label={`Edit ${field} sound`}
+          title="Drag onto O, N, or C, or drop left/right of another sound"
+          draggable={Boolean(
+            value.trim(),
+          )}
+          onDragOver={(event) =>
+            handleSoundBoxDragOver(
+              event,
+              syllable.id,
+              field,
+              index,
+            )
+          }
+          onDrop={(event) =>
+            handleSoundBoxDrop(
+              event,
+              syllable.id,
+              field,
+              index,
+            )
+          }
+          onDragStart={(event) =>
+            startSoundDrag(
+              event,
+              {
+                type: "segment",
+                syllableId:
+                  syllable.id,
+                field,
+                index,
+              },
+              value,
+            )
+          }
+          onDragEnd={
+            finishSoundDrag
+          }
           onFocus={() =>
             selectSound({
               type: "segment",
@@ -4496,6 +5481,7 @@ function App() {
               data-y={String(
                 layout.rootY,
               )}
+              data-motion-id="word-node"
               data-export-label={
                 word.trim() ||
                 "Wd"
@@ -4625,6 +5611,24 @@ function App() {
                   branchTarget.distance <
                     100;
 
+                const onsetIsSoundTarget =
+                  soundDropTarget?.syllableId ===
+                    column.syllable.id &&
+                  soundDropTarget.field ===
+                    "onset";
+
+                const nucleusIsSoundTarget =
+                  soundDropTarget?.syllableId ===
+                    column.syllable.id &&
+                  soundDropTarget.field ===
+                    "nucleus";
+
+                const codaIsSoundTarget =
+                  soundDropTarget?.syllableId ===
+                    column.syllable.id &&
+                  soundDropTarget.field ===
+                    "coda";
+
                 const sigmaStyle =
                   nodeStyle(
                     "syllable",
@@ -4635,7 +5639,8 @@ function App() {
                   nodeStyle(
                     "onset",
                     onsetSelected,
-                    onsetIsTarget,
+                    onsetIsTarget ||
+                      onsetIsSoundTarget,
                   );
 
                 const rhymeStyle =
@@ -4647,13 +5652,15 @@ function App() {
                   nodeStyle(
                     "nucleus",
                     nucleusSelected,
+                    nucleusIsSoundTarget,
                   );
 
                 const codaStyle =
                   nodeStyle(
                     "coda",
                     codaSelected,
-                    codaIsTarget,
+                    codaIsTarget ||
+                      codaIsSoundTarget,
                   );
 
                 const wordStartY =
@@ -4694,6 +5701,9 @@ function App() {
                 return (
                   <g
                     className="animated-tree-column"
+                    data-motion-id={
+                      `syllable-column-${column.syllable.id}`
+                    }
                     key={
                       column.syllable
                         .id
@@ -4942,6 +5952,24 @@ function App() {
                           }
                           strokeWidth="2"
                           className="tree-node branch-node"
+                          onDragOver={(event) =>
+                            handleSoundDragOver(
+                              event,
+                              column
+                                .syllable
+                                .id,
+                              "onset",
+                            )
+                          }
+                          onDrop={(event) =>
+                            handleSoundDrop(
+                              event,
+                              column
+                                .syllable
+                                .id,
+                              "onset",
+                            )
+                          }
                           onPointerDown={(
                             event,
                           ) =>
@@ -5087,6 +6115,24 @@ function App() {
                       <g
                         className="ghost-node"
                         data-ui-only="true"
+                        onDragOver={(event) =>
+                          handleSoundDragOver(
+                            event,
+                            column
+                              .syllable
+                              .id,
+                            "onset",
+                          )
+                        }
+                        onDrop={(event) =>
+                          handleSoundDrop(
+                            event,
+                            column
+                              .syllable
+                              .id,
+                            "onset",
+                          )
+                        }
                         onClick={() => {
                           setBranchVisible(
                             column
@@ -5278,6 +6324,24 @@ function App() {
                       }
                       strokeWidth="2"
                       className="tree-node"
+                      onDragOver={(event) =>
+                        handleSoundDragOver(
+                          event,
+                          column
+                            .syllable
+                            .id,
+                          "nucleus",
+                        )
+                      }
+                      onDrop={(event) =>
+                        handleSoundDrop(
+                          event,
+                          column
+                            .syllable
+                            .id,
+                          "nucleus",
+                        )
+                      }
                       onClick={() => {
                         setSelectedItem({
                           type:
@@ -5472,6 +6536,24 @@ function App() {
                           }
                           strokeWidth="2"
                           className="tree-node branch-node"
+                          onDragOver={(event) =>
+                            handleSoundDragOver(
+                              event,
+                              column
+                                .syllable
+                                .id,
+                              "coda",
+                            )
+                          }
+                          onDrop={(event) =>
+                            handleSoundDrop(
+                              event,
+                              column
+                                .syllable
+                                .id,
+                              "coda",
+                            )
+                          }
                           onPointerDown={(
                             event,
                           ) =>
@@ -5617,6 +6699,24 @@ function App() {
                       <g
                         className="ghost-node"
                         data-ui-only="true"
+                        onDragOver={(event) =>
+                          handleSoundDragOver(
+                            event,
+                            column
+                              .syllable
+                              .id,
+                            "coda",
+                          )
+                        }
+                        onDrop={(event) =>
+                          handleSoundDrop(
+                            event,
+                            column
+                              .syllable
+                              .id,
+                            "coda",
+                          )
+                        }
                         onClick={() => {
                           setBranchVisible(
                             column
@@ -5797,6 +6897,14 @@ function App() {
                         data-y={String(
                           layout.terminalY,
                         )}
+                        data-motion-id={
+                          `shared-box-${column.syllable.id}`
+                        }
+                        data-sound-location={
+                          getSharedLocationKey(
+                            column.syllable.id,
+                          )
+                        }
                         data-export-label={
                           shared
                         }
@@ -5836,12 +6944,47 @@ function App() {
                               ? "selected"
                               : ""
                           } ${
+                            soundDragSource?.type ===
+                              "shared" &&
+                            soundDragSource.syllableId ===
+                              column.syllable.id
+                              ? "sound-drag-source"
+                              : ""
+                          } ${
+                            landedSoundLocation ===
+                              getSharedLocationKey(
+                                column.syllable.id,
+                              )
+                              ? "sound-just-landed"
+                              : ""
+                          } ${
                             plainStyle
                               ? "plain"
                               : ""
                           }`}
                           value={shared}
                           aria-label="Edit ambisyllabic sound"
+                          title="Drag this shared sound box onto O, N, or C"
+                          draggable={Boolean(
+                            shared.trim(),
+                          )}
+                          onDragStart={(event) =>
+                            startSoundDrag(
+                              event,
+                              {
+                                type:
+                                  "shared",
+                                syllableId:
+                                  column
+                                    .syllable
+                                    .id,
+                              },
+                              shared,
+                            )
+                          }
+                          onDragEnd={
+                            finishSoundDrag
+                          }
                           onFocus={() =>
                             selectSound({
                               type:
@@ -6050,7 +7193,7 @@ function App() {
           </span>
 
           <span>
-            IPA buttons make new branches
+            Drag sound boxes onto O, N, or C
           </span>
         </div>
 
