@@ -53,6 +53,50 @@ type BranchKind =
   | "onset"
   | "coda";
 
+type FontChoice =
+  | "system-sans"
+  | "ipa-serif"
+  | "traditional-serif"
+  | "monospace";
+
+interface TreeColors {
+  canvasBackground: string;
+  line: string;
+  wordFill: string;
+  wordOutline: string;
+  wordText: string;
+  syllableFill: string;
+  syllableOutline: string;
+  syllableText: string;
+  onsetRhymeFill: string;
+  onsetRhymeOutline: string;
+  onsetRhymeText: string;
+  nucleusCodaFill: string;
+  nucleusCodaOutline: string;
+  nucleusCodaText: string;
+  terminalFill: string;
+  terminalOutline: string;
+  terminalText: string;
+  sharedFill: string;
+  sharedOutline: string;
+  sharedText: string;
+}
+
+type TreeColorKey =
+  keyof TreeColors;
+
+interface CanvasSnapshot {
+  word: string;
+  syllables: Syllable[];
+  plainStyle: boolean;
+  treeFontSize: number;
+  treeBold: boolean;
+  treeItalic: boolean;
+  fontFamily: FontChoice;
+  treeColors: TreeColors;
+  pngTransparent: boolean;
+}
+
 interface Syllable {
   id: string;
   onset: string[];
@@ -120,27 +164,314 @@ interface CanvasLayout {
 }
 
 const STORAGE_KEY =
-  "syllable-tree-builder-state-v5";
+  "syllable-tree-builder-state-v12";
 
-const ipaGroups = {
-  "Consonants": [
-    "p", "b", "t", "d", "k", "ɡ",
-    "f", "v", "θ", "ð", "s", "z",
-    "ʃ", "ʒ", "h", "tʃ", "dʒ",
-    "m", "n", "ŋ", "l", "ɹ", "j", "w",
+const defaultTreeColors: TreeColors = {
+  canvasBackground: "#fffdf9",
+  line: "#268b72",
+  wordFill: "#1f3d57",
+  wordOutline: "#1f3d57",
+  wordText: "#ffffff",
+  syllableFill: "#faece8",
+  syllableOutline: "#df6b55",
+  syllableText: "#b94f3d",
+  onsetRhymeFill: "#e6f3f1",
+  onsetRhymeOutline: "#269688",
+  onsetRhymeText: "#1d746a",
+  nucleusCodaFill: "#e8f1f6",
+  nucleusCodaOutline: "#2f7ca8",
+  nucleusCodaText: "#246587",
+  terminalFill: "#faece8",
+  terminalOutline: "#efb0a4",
+  terminalText: "#b94f3d",
+  sharedFill: "#fbf3e3",
+  sharedOutline: "#d99a2b",
+  sharedText: "#a97418",
+};
+
+const colorGroups: Array<{
+  label: string;
+  fill: TreeColorKey;
+  outline: TreeColorKey;
+  text: TreeColorKey;
+}> = [
+  {
+    label: "Word",
+    fill: "wordFill",
+    outline: "wordOutline",
+    text: "wordText",
+  },
+  {
+    label: "Syllable",
+    fill: "syllableFill",
+    outline: "syllableOutline",
+    text: "syllableText",
+  },
+  {
+    label: "Onset / Rhyme",
+    fill: "onsetRhymeFill",
+    outline: "onsetRhymeOutline",
+    text: "onsetRhymeText",
+  },
+  {
+    label: "Nucleus / Coda",
+    fill: "nucleusCodaFill",
+    outline: "nucleusCodaOutline",
+    text: "nucleusCodaText",
+  },
+  {
+    label: "Sound boxes",
+    fill: "terminalFill",
+    outline: "terminalOutline",
+    text: "terminalText",
+  },
+  {
+    label: "Shared sound",
+    fill: "sharedFill",
+    outline: "sharedOutline",
+    text: "sharedText",
+  },
+];
+
+function normalizeTreeColors(
+  value: unknown,
+): TreeColors {
+  if (
+    !value ||
+    typeof value !== "object"
+  ) {
+    return {
+      ...defaultTreeColors,
+    };
+  }
+
+  const supplied =
+    value as Partial<TreeColors>;
+
+  return Object.fromEntries(
+    Object.entries(
+      defaultTreeColors,
+    ).map(([key, fallback]) => [
+      key,
+      typeof supplied[
+        key as TreeColorKey
+      ] === "string"
+        ? supplied[
+            key as TreeColorKey
+          ]
+        : fallback,
+    ]),
+  ) as unknown as TreeColors;
+}
+
+const fontOptions: Array<{
+  id: FontChoice;
+  label: string;
+  css: string;
+  latex: string;
+}> = [
+  {
+    id: "system-sans",
+    label: "System sans",
+    css: '"Segoe UI", "Arial Unicode MS", Arial, sans-serif',
+    latex: "Noto Sans",
+  },
+  {
+    id: "ipa-serif",
+    label: "IPA serif",
+    css: '"Charis SIL", "Doulos SIL", Georgia, serif',
+    latex: "Charis SIL",
+  },
+  {
+    id: "traditional-serif",
+    label: "Traditional serif",
+    css: 'Georgia, "Times New Roman", serif',
+    latex: "TeX Gyre Pagella",
+  },
+  {
+    id: "monospace",
+    label: "Monospace",
+    css: '"Cascadia Mono", "Courier New", monospace',
+    latex: "Noto Sans Mono",
+  },
+];
+
+const ipaCharts = {
+  "Pulmonic consonants": [
+    {
+      label: "Plosive",
+      cells: [
+        "p b", "t d", "ʈ ɖ", "c ɟ",
+        "k ɡ", "q ɢ", "ʔ",
+      ],
+    },
+    {
+      label: "Nasal",
+      cells: [
+        "m", "ɱ", "n", "ɳ", "ɲ",
+        "ŋ", "ɴ",
+      ],
+    },
+    {
+      label: "Trill",
+      cells: [
+        "ʙ", "r", "", "", "", "ʀ", "",
+      ],
+    },
+    {
+      label: "Tap / flap",
+      cells: [
+        "", "ɾ", "ɽ", "", "", "", "",
+      ],
+    },
+    {
+      label: "Fricative",
+      cells: [
+        "ɸ β", "f v", "θ ð", "s z",
+        "ʃ ʒ", "ʂ ʐ", "ç ʝ", "x ɣ",
+        "χ ʁ", "ħ ʕ", "h ɦ",
+      ],
+    },
+    {
+      label: "Lateral fricative",
+      cells: [
+        "", "", "", "ɬ ɮ", "", "", "",
+      ],
+    },
+    {
+      label: "Approximant",
+      cells: [
+        "", "ʋ", "ɹ", "ɻ", "j", "ɰ", "",
+      ],
+    },
+    {
+      label: "Lateral approximant",
+      cells: [
+        "", "", "l", "ɭ", "ʎ", "ʟ", "",
+      ],
+    },
   ],
   "Vowels": [
-    "i", "ɪ", "eɪ", "ɛ", "æ", "ə",
-    "ɚ", "ʌ", "ɑ", "ɔ", "oʊ", "ʊ",
-    "u", "aɪ", "aʊ", "ɔɪ",
+    {
+      label: "Close",
+      cells: [
+        "i y", "ɨ ʉ", "ɯ u",
+      ],
+    },
+    {
+      label: "Near-close",
+      cells: [
+        "ɪ ʏ", "", "ʊ",
+      ],
+    },
+    {
+      label: "Close-mid",
+      cells: [
+        "e ø", "ɘ ɵ", "ɤ o",
+      ],
+    },
+    {
+      label: "Mid",
+      cells: [
+        "", "ə", "",
+      ],
+    },
+    {
+      label: "Open-mid",
+      cells: [
+        "ɛ œ", "ɜ ɞ", "ʌ ɔ",
+      ],
+    },
+    {
+      label: "Near-open",
+      cells: [
+        "æ", "ɐ", "",
+      ],
+    },
+    {
+      label: "Open",
+      cells: [
+        "a ɶ", "", "ɑ ɒ",
+      ],
+    },
+    {
+      label: "Course diphthongs",
+      cells: [
+        "eɪ aɪ ɔɪ", "aʊ", "oʊ",
+      ],
+    },
   ],
-  "Other": [
-    "ɾ", "ʔ", "ɫ", "ɝ", "ː", "̃",
+  "Non-pulmonic": [
+    {
+      label: "Clicks",
+      cells: [
+        "ʘ", "ǀ", "ǃ", "ǂ", "ǁ",
+      ],
+    },
+    {
+      label: "Voiced implosives",
+      cells: [
+        "ɓ", "ɗ", "ʄ", "ɠ", "ʛ",
+      ],
+    },
+    {
+      label: "Ejectives",
+      cells: [
+        "pʼ", "tʼ", "kʼ", "sʼ", "qʼ",
+      ],
+    },
+  ],
+  "Other symbols": [
+    {
+      label: "Other consonants",
+      cells: [
+        "ʍ", "w", "ɥ", "ʜ", "ʢ",
+        "ʡ", "ɕ", "ʑ", "ɺ", "ɧ",
+        "ɫ", "ɾ", "ʔ",
+      ],
+    },
+    {
+      label: "Suprasegmentals",
+      cells: [
+        "ˈ", "ˌ", "ː", "ˑ", "̆",
+        ".", "|", "‖", "‿",
+      ],
+    },
+    {
+      label: "Diacritics",
+      cells: [
+        "̥", "̬", "ʰ", "̹", "̜",
+        "̟", "̠", "̈", "̽", "̩",
+        "̯", "˞", "ʷ", "ʲ", "ˠ",
+        "ˤ", "̴", "̝", "̞", "̘",
+        "̙", "̪", "̺", "̻", "̃",
+        "ⁿ", "ˡ", "̚",
+      ],
+    },
+    {
+      label: "Tones",
+      cells: [
+        "˥", "˦", "˧", "˨", "˩",
+        "̌", "̂", "᷄", "᷅", "᷈",
+        "ꜛ", "ꜜ", "↑", "↓",
+      ],
+    },
   ],
 } as const;
 
-type IpaGroup =
-  keyof typeof ipaGroups;
+type IpaChart =
+  keyof typeof ipaCharts;
+
+const combiningIpaSymbols =
+  new Set([
+    "̥", "̬", "ʰ", "̹", "̜",
+    "̟", "̠", "̈", "̽", "̩",
+    "̯", "˞", "ʷ", "ʲ", "ˠ",
+    "ˤ", "̴", "̝", "̞", "̘",
+    "̙", "̪", "̺", "̻", "̃",
+    "ⁿ", "ˡ", "̚", "ː", "ˑ",
+    "̆", "ʼ",
+  ]);
 
 const presets: Preset[] = [
   {
@@ -326,10 +657,49 @@ function normalizeSyllables(
   );
 }
 
+function cloneSyllables(
+  syllables: readonly Syllable[],
+): Syllable[] {
+  return syllables.map(
+    (syllable) => ({
+      ...syllable,
+      onset: [...syllable.onset],
+      nucleus: [...syllable.nucleus],
+      coda: [...syllable.coda],
+    }),
+  );
+}
+
+function cloneSnapshot(
+  snapshot: CanvasSnapshot,
+): CanvasSnapshot {
+  return {
+    ...snapshot,
+    syllables: cloneSyllables(
+      snapshot.syllables,
+    ),
+    treeColors: {
+      ...snapshot.treeColors,
+    },
+  };
+}
+
+function snapshotKey(
+  snapshot: CanvasSnapshot,
+): string {
+  return JSON.stringify(snapshot);
+}
+
 function loadInitialState(): {
   word: string;
   syllables: Syllable[];
   plainStyle: boolean;
+  treeFontSize: number;
+  treeBold: boolean;
+  treeItalic: boolean;
+  fontFamily: FontChoice;
+  treeColors: TreeColors;
+  pngTransparent: boolean;
 } {
   try {
     const raw =
@@ -349,6 +719,12 @@ function loadInitialState(): {
       word?: unknown;
       syllables?: unknown;
       plainStyle?: unknown;
+      treeFontSize?: unknown;
+      treeBold?: unknown;
+      treeItalic?: unknown;
+      fontFamily?: unknown;
+      treeColors?: unknown;
+      pngTransparent?: unknown;
     };
 
     if (
@@ -418,50 +794,92 @@ function loadInitialState(): {
         ),
       plainStyle:
         parsed.plainStyle === true,
+      treeFontSize:
+        typeof parsed.treeFontSize ===
+          "number"
+          ? Math.min(
+              30,
+              Math.max(
+                12,
+                parsed.treeFontSize,
+              ),
+            )
+          : 20,
+      treeBold:
+        parsed.treeBold === true,
+      treeItalic:
+        parsed.treeItalic === true,
+      fontFamily:
+        fontOptions.some(
+          (option) =>
+            option.id ===
+            parsed.fontFamily,
+        )
+          ? parsed.fontFamily as FontChoice
+          : "system-sans",
+      treeColors:
+        normalizeTreeColors(
+          parsed.treeColors,
+        ),
+      pngTransparent:
+        parsed.pngTransparent !== false,
     };
   } catch {
-    const preset = presets[0];
-
     return {
-      word: preset.word,
-      syllables:
-        normalizeSyllables(
-          preset.syllables.map(
-            (syllable) =>
-              createSyllable(
-                syllable,
-              ),
-          ),
-        ),
+      word: "Wd",
+      syllables: [
+        createSyllable({
+          nucleus: [""],
+          primary: true,
+        }),
+      ],
       plainStyle: false,
+      treeFontSize: 20,
+      treeBold: false,
+      treeItalic: false,
+      fontFamily: "system-sans",
+      treeColors: {
+        ...defaultTreeColors,
+      },
+      pngTransparent: true,
     };
   }
 }
 
 function buildLayout(
   syllables: readonly Syllable[],
+  treeFontSize: number,
+  plainStyle: boolean,
 ): CanvasLayout {
-  const width = Math.max(
-    900,
-    syllables.length * 285 + 210,
-  );
-
   const height = 620;
-  const rootX = width / 2;
   const rootY = 56;
   const sigmaY = 170;
   const branchY = 300;
   const subbranchY = 405;
   const terminalY = 520;
-
-  const centers =
-    syllables.map(
-      (_, index) =>
-        ((index + 1) * width) /
-        (syllables.length + 1),
+  const outerMargin = 115;
+  const minimumColumnWidth =
+    plainStyle ? 235 : 300;
+  const terminalSpacing = Math.max(
+    plainStyle ? 72 : 94,
+    treeFontSize *
+      (plainStyle ? 3.5 : 4.25),
+  );
+  const terminalWidth = Math.max(
+    plainStyle ? 70 : 82,
+    treeFontSize *
+      (plainStyle ? 3.4 : 4.0),
+  );
+  const branchGap =
+    plainStyle ? 36 : 56;
+  const optionalBranchOffset =
+    Math.max(
+      plainStyle ? 78 : 96,
+      treeFontSize *
+        (plainStyle ? 3.7 : 4.6),
     );
 
-  const columns =
+  const columnMetrics =
     syllables.map(
       (syllable, index) => {
         const previousShared =
@@ -487,24 +905,173 @@ function buildLayout(
           syllable.hasCoda ||
           nextShared;
 
+        const onsetCount =
+          Math.max(
+            syllable.hasOnset
+              ? syllable.onset.length
+              : 0,
+            previousShared ? 1 : 0,
+          );
+
+        const nucleusCount =
+          Math.max(
+            1,
+            syllable.nucleus.length,
+          );
+
+        const codaCount =
+          Math.max(
+            syllable.hasCoda
+              ? syllable.coda.length
+              : 0,
+            nextShared ? 1 : 0,
+          );
+
+        const onsetWidth =
+          onsetVisible && onsetCount > 0
+            ? terminalWidth +
+              Math.max(
+                0,
+                onsetCount - 1,
+              ) * terminalSpacing
+            : 0;
+
+        const nucleusWidth =
+          terminalWidth +
+          Math.max(
+            0,
+            nucleusCount - 1,
+          ) * terminalSpacing;
+
+        const codaWidth =
+          codaVisible && codaCount > 0
+            ? terminalWidth +
+              Math.max(
+                0,
+                codaCount - 1,
+              ) * terminalSpacing
+            : 0;
+
+        const rhymeWidth =
+          codaVisible
+            ? nucleusWidth +
+              branchGap +
+              codaWidth
+            : nucleusWidth;
+
+        const totalSpan =
+          onsetVisible
+            ? onsetWidth +
+              branchGap +
+              rhymeWidth
+            : rhymeWidth;
+
+        return {
+          onsetVisible,
+          codaVisible,
+          onsetWidth,
+          nucleusWidth,
+          codaWidth,
+          rhymeWidth,
+          totalSpan,
+          columnWidth: Math.max(
+            minimumColumnWidth,
+            totalSpan +
+              (plainStyle
+                ? 110
+                : 160),
+          ),
+        };
+      },
+    );
+
+  const columnWidths =
+    columnMetrics.map(
+      (metrics) =>
+        metrics.columnWidth,
+    );
+
+  const totalColumnsWidth =
+    columnWidths.reduce(
+      (total, value) =>
+        total + value,
+      0,
+    );
+
+  const width = Math.max(
+    900,
+    totalColumnsWidth +
+      outerMargin * 2,
+  );
+
+  const rootX = width / 2;
+  const centers: number[] = [];
+
+  if (syllables.length === 1) {
+    centers.push(rootX);
+  } else {
+    let cursor = outerMargin;
+
+    columnWidths.forEach(
+      (columnWidth) => {
+        centers.push(
+          cursor +
+            columnWidth / 2,
+        );
+
+        cursor += columnWidth;
+      },
+    );
+  }
+
+  const columns =
+    syllables.map(
+      (syllable, index) => {
         const centerX =
           centers[index];
+        const metrics =
+          columnMetrics[index];
+        const leftEdge =
+          centerX -
+          metrics.totalSpan / 2;
 
         const onsetX =
-          centerX - 64;
+          metrics.onsetVisible
+            ? leftEdge +
+              metrics.onsetWidth / 2
+            : centerX -
+              optionalBranchOffset;
+
+        const rhymeLeft =
+          metrics.onsetVisible
+            ? leftEdge +
+              metrics.onsetWidth +
+              branchGap
+            : leftEdge;
+
+        const rhymeRight =
+          rhymeLeft +
+          metrics.rhymeWidth;
 
         const rhymeX =
-          onsetVisible
-            ? centerX + 50
-            : centerX;
+          (rhymeLeft +
+            rhymeRight) /
+          2;
 
         const nucleusX =
-          codaVisible
-            ? rhymeX - 40
+          metrics.codaVisible
+            ? rhymeLeft +
+              metrics.nucleusWidth / 2
             : rhymeX;
 
         const codaX =
-          rhymeX + 58;
+          metrics.codaVisible
+            ? rhymeLeft +
+              metrics.nucleusWidth +
+              branchGap +
+              metrics.codaWidth / 2
+            : rhymeX +
+              optionalBranchOffset;
 
         return {
           syllable,
@@ -514,59 +1081,35 @@ function buildLayout(
           rhymeX,
           nucleusX,
           codaX,
-          onsetVisible,
-          codaVisible,
+          onsetVisible:
+            metrics.onsetVisible,
+          codaVisible:
+            metrics.codaVisible,
         };
       },
     );
 
-  const insertionXs: number[] = [];
+  const insertionXs: number[] = [
+    outerMargin / 2,
+  ];
 
-  if (centers.length === 1) {
+  for (
+    let index = 0;
+    index <
+    columns.length - 1;
+    index += 1
+  ) {
     insertionXs.push(
-      centers[0] - 145,
-      centers[0] + 145,
-    );
-  } else {
-    insertionXs.push(
-      Math.max(
-        42,
-        centers[0] -
-          (centers[1] -
-            centers[0]) /
-            2,
-      ),
-    );
-
-    for (
-      let index = 0;
-      index <
-      centers.length - 1;
-      index += 1
-    ) {
-      insertionXs.push(
-        (centers[index] +
-          centers[index + 1]) /
-          2,
-      );
-    }
-
-    insertionXs.push(
-      Math.min(
-        width - 42,
-        centers[
-          centers.length - 1
-        ] +
-          (centers[
-            centers.length - 1
-          ] -
-            centers[
-              centers.length - 2
-            ]) /
-            2,
-      ),
+      (columns[index].centerX +
+        columns[index + 1]
+          .centerX) /
+        2,
     );
   }
+
+  insertionXs.push(
+    width - outerMargin / 2,
+  );
 
   return {
     width,
@@ -671,7 +1214,7 @@ function makeLatexTree(
 
         if (nextShared) {
           extraDraws.push(
-            `\\draw (${onsetName}${
+            `\\draw (onset${
               index + 1
             }) -- (${sharedName});`,
           );
@@ -698,13 +1241,14 @@ function makeLatexTree(
               ? syllable.nucleus
                   .map(
                     (segment) =>
-                      `[${escapeLatex(
-                        segment ||
-                          "\\varnothing",
-                      )}]`,
+                      segment
+                        ? `[${escapeLatex(
+                            segment,
+                          )}]`
+                        : `[{\\ensuremath{\\varnothing}}]`,
                   )
                   .join(" ")
-              : "[\\varnothing]"
+              : `[{\\ensuremath{\\varnothing}}]`
           }]`;
 
         const ownCoda =
@@ -734,18 +1278,135 @@ function makeLatexTree(
             ? ", edge={double}"
             : "";
 
-        return `[\\sigma${sigmaOptions} ${onsetTree} [R ${nucleusTree} ${codaTree}]]`;
+        return `[{\\ensuremath{\\sigma}}${sigmaOptions} ${onsetTree} [R ${nucleusTree} ${codaTree}]]`;
       },
     );
 
   return `\\begin{forest}
 [${escapeLatex(
-    word.trim() || "Word",
+    word.trim() || "Wd",
   )}
 ${syllableTrees.join("\n")}
 ]
 ${extraDraws.join("\n")}
 \\end{forest}`;
+}
+
+function makeFullLatex(
+  word: string,
+  syllables: readonly Syllable[],
+  options: {
+    fontChoice: FontChoice;
+    fontSize: number;
+    bold: boolean;
+    italic: boolean;
+    plainStyle?: boolean;
+  },
+): string {
+  const familyCommand =
+    options.fontChoice ===
+    "monospace"
+      ? "\\ttfamily"
+      : options.fontChoice ===
+          "system-sans"
+        ? "\\sffamily"
+        : "\\rmfamily";
+
+  const series =
+    options.bold
+      ? "\\bfseries"
+      : "\\mdseries";
+
+  const shape =
+    options.italic
+      ? "\\itshape"
+      : "\\upshape";
+
+  const lineHeight =
+    Math.round(
+      options.fontSize * 1.25,
+    );
+
+  const unicodeMap = `
+\\usepackage[utf8]{inputenc}
+\\usepackage[T1]{fontenc}
+\\usepackage{textcomp}
+\\usepackage{tipa}
+\\usepackage{newunicodechar}
+\\newunicodechar{ə}{\\textipa{@}}
+\\newunicodechar{ɪ}{\\textipa{I}}
+\\newunicodechar{ʊ}{\\textipa{U}}
+\\newunicodechar{ʌ}{\\textipa{V}}
+\\newunicodechar{æ}{\\textipa{{}}}
+\\newunicodechar{ɑ}{\\textipa{A}}
+\\newunicodechar{ɔ}{\\textipa{O}}
+\\newunicodechar{ɛ}{\\textipa{E}}
+\\newunicodechar{ɚ}{\\textipa{@\\textrhoticity}}
+\\newunicodechar{ɝ}{\\textipa{3\\textrhoticity}}
+\\newunicodechar{ɜ}{\\textipa{3}}
+\\newunicodechar{ɹ}{\\textipa{r\\textturnr}}
+\\newunicodechar{ŋ}{\\textipa{N}}
+\\newunicodechar{θ}{\\textipa{T}}
+\\newunicodechar{ð}{\\textipa{D}}
+\\newunicodechar{ʃ}{\\textipa{S}}
+\\newunicodechar{ʒ}{\\textipa{Z}}
+\\newunicodechar{ʔ}{\\textipa{P}}
+\\newunicodechar{ɾ}{\\textipa{R}}
+\\newunicodechar{ɲ}{\\textipa{J}}
+\\newunicodechar{ʎ}{\\textipa{L}}
+\\newunicodechar{ɬ}{\\textipa{K}}
+\\newunicodechar{ɮ}{\\textipa{K\\!\\textbeltl}}
+\\newunicodechar{ɡ}{g}
+\\newunicodechar{ɸ}{\\textipa{F}}
+\\newunicodechar{β}{\\textipa{B}}
+\\newunicodechar{ç}{\\textipa{C}}
+\\newunicodechar{ʝ}{\\textipa{j\\textctj}}
+\\newunicodechar{χ}{\\textipa{X}}
+\\newunicodechar{ʁ}{\\textipa{R\\!\\textinvscr}}
+\\newunicodechar{ħ}{\\textipa{H}}
+\\newunicodechar{ʕ}{\\textipa{?\\textrevglotstop}}
+\\newunicodechar{ɦ}{\\textipa{h\\textcth}}
+\\newunicodechar{ɳ}{\\textipa{n\\textrtailn}}
+\\newunicodechar{ʈ}{\\textipa{t\\textrtailt}}
+\\newunicodechar{ɖ}{\\textipa{d\\textrtaild}}
+\\newunicodechar{ɭ}{\\textipa{l\\textrtaill}}
+\\newunicodechar{ɻ}{\\textipa{r\\textrtailr}}
+\\newunicodechar{ɽ}{\\textipa{r\\textrtaild}}
+\\newunicodechar{ʰ}{\\textsuperscript{h}}
+\\newunicodechar{ʷ}{\\textsuperscript{w}}
+\\newunicodechar{ʲ}{\\textsuperscript{j}}
+\\newunicodechar{ː}{:}
+\\newunicodechar{ˑ}{;}
+\\newunicodechar{̃}{\\~{}}
+\\newunicodechar{̩}{\\textsubring}
+\\newunicodechar{̯}{\\textsubarch}
+\\newunicodechar{ʼ}{'}
+`;
+
+  return `% Compile with pdfLaTeX.
+\\documentclass[tikz,border=12pt]{standalone}
+${unicodeMap}\\usepackage{forest}
+\\forestset{%
+  syllable tree/.style={%
+    for tree={%
+      align=center,%
+      parent anchor=south,%
+      child anchor=north,%
+      l sep=24pt,%
+      s sep=18pt,%
+      inner sep=1.8pt,%
+      font=${familyCommand}\\fontsize{${options.fontSize}}{${lineHeight}}\\selectfont${series}${shape}%
+    }%
+  }%
+}
+\\begin{document}
+\\begin{forest} syllable tree
+${makeLatexTree(word, syllables)
+  .replace("\\begin{forest}\n", "")
+  .replace("\n\\end{forest}", "")}
+\\end{forest}
+\\end{document}
+`;
 }
 
 function App() {
@@ -770,6 +1431,56 @@ function App() {
   );
 
   const [
+    treeFontSize,
+    setTreeFontSize,
+  ] = useState(
+    initialState.treeFontSize,
+  );
+
+  const [
+    treeBold,
+    setTreeBold,
+  ] = useState(
+    initialState.treeBold,
+  );
+
+  const [
+    treeItalic,
+    setTreeItalic,
+  ] = useState(
+    initialState.treeItalic,
+  );
+
+  const [zoom, setZoom] =
+    useState(1);
+
+  const [
+    fontFamily,
+    setFontFamily,
+  ] = useState<FontChoice>(
+    initialState.fontFamily,
+  );
+
+  const [
+    treeColors,
+    setTreeColors,
+  ] = useState<TreeColors>(
+    initialState.treeColors,
+  );
+
+  const [
+    pngTransparent,
+    setPngTransparent,
+  ] = useState(
+    initialState.pngTransparent,
+  );
+
+  const [
+    colorsOpen,
+    setColorsOpen,
+  ] = useState(false);
+
+  const [
     selectedItem,
     setSelectedItem,
   ] = useState<SelectedItem>(
@@ -784,6 +1495,11 @@ function App() {
   );
 
   const [
+    replaceOnNextIpa,
+    setReplaceOnNextIpa,
+  ] = useState(false);
+
+  const [
     ipaOpen,
     setIpaOpen,
   ] = useState(false);
@@ -792,8 +1508,8 @@ function App() {
     ipaGroup,
     setIpaGroup,
   ] =
-    useState<IpaGroup>(
-      "Consonants",
+    useState<IpaChart>(
+      "Pulmonic consonants",
     );
 
   const [
@@ -823,6 +1539,45 @@ function App() {
       null,
     );
 
+  const canvasScrollRef =
+    useRef<HTMLDivElement | null>(
+      null,
+    );
+
+  const historyRef =
+    useRef<CanvasSnapshot[]>([
+      cloneSnapshot({
+        word: initialState.word,
+        syllables:
+          initialState.syllables,
+        plainStyle:
+          initialState.plainStyle,
+        treeFontSize:
+          initialState.treeFontSize,
+        treeBold:
+          initialState.treeBold,
+        treeItalic:
+          initialState.treeItalic,
+        fontFamily:
+          initialState.fontFamily,
+        treeColors:
+          initialState.treeColors,
+        pngTransparent:
+          initialState.pngTransparent,
+      }),
+    ]);
+
+  const historyIndexRef =
+    useRef(0);
+
+  const restoringHistoryRef =
+    useRef(false);
+
+  const [
+    historyVersion,
+    setHistoryVersion,
+  ] = useState(0);
+
   useEffect(() => {
     localStorage.setItem(
       STORAGE_KEY,
@@ -830,19 +1585,334 @@ function App() {
         word,
         syllables,
         plainStyle,
+        treeFontSize,
+        treeBold,
+        treeItalic,
+        fontFamily,
+        treeColors,
+        pngTransparent,
       }),
     );
   }, [
     word,
     syllables,
     plainStyle,
+    treeFontSize,
+    treeBold,
+    treeItalic,
+    fontFamily,
+    treeColors,
+    pngTransparent,
+  ]);
+
+  useEffect(() => {
+    const snapshot: CanvasSnapshot = {
+      word,
+      syllables:
+        cloneSyllables(
+          syllables,
+        ),
+      plainStyle,
+      treeFontSize,
+      treeBold,
+      treeItalic,
+      fontFamily,
+      treeColors: {
+        ...treeColors,
+      },
+      pngTransparent,
+    };
+
+    if (
+      restoringHistoryRef.current
+    ) {
+      restoringHistoryRef.current =
+        false;
+      return;
+    }
+
+    const current =
+      historyRef.current[
+        historyIndexRef.current
+      ];
+
+    if (
+      current &&
+      snapshotKey(current) ===
+        snapshotKey(snapshot)
+    ) {
+      return;
+    }
+
+    const nextHistory =
+      historyRef.current.slice(
+        0,
+        historyIndexRef.current + 1,
+      );
+
+    nextHistory.push(
+      cloneSnapshot(snapshot),
+    );
+
+    if (nextHistory.length > 100) {
+      nextHistory.shift();
+    }
+
+    historyRef.current =
+      nextHistory;
+    historyIndexRef.current =
+      nextHistory.length - 1;
+    setHistoryVersion(
+      (previous) =>
+        previous + 1,
+    );
+  }, [
+    word,
+    syllables,
+    plainStyle,
+    treeFontSize,
+    treeBold,
+    treeItalic,
+    fontFamily,
+    treeColors,
+    pngTransparent,
   ]);
 
   const layout = useMemo(
     () =>
-      buildLayout(syllables),
-    [syllables],
+      buildLayout(
+        syllables,
+        treeFontSize,
+        plainStyle,
+      ),
+    [
+      syllables,
+      treeFontSize,
+      plainStyle,
+    ],
   );
+
+  const selectedFont =
+    useMemo(
+      () =>
+        fontOptions.find(
+          (option) =>
+            option.id ===
+            fontFamily,
+        ) ?? fontOptions[0],
+      [fontFamily],
+    );
+
+  const canUndo =
+    historyVersion >= 0 &&
+    historyIndexRef.current > 0;
+
+  const canRedo =
+    historyVersion >= 0 &&
+    historyIndexRef.current <
+      historyRef.current.length - 1;
+
+  function restoreSnapshot(
+    snapshot: CanvasSnapshot,
+  ) {
+    restoringHistoryRef.current =
+      true;
+    setWord(snapshot.word);
+    setSyllables(
+      cloneSyllables(
+        snapshot.syllables,
+      ),
+    );
+    setPlainStyle(
+      snapshot.plainStyle,
+    );
+    setTreeFontSize(
+      snapshot.treeFontSize,
+    );
+    setTreeBold(
+      snapshot.treeBold,
+    );
+    setTreeItalic(
+      snapshot.treeItalic,
+    );
+    setFontFamily(
+      snapshot.fontFamily,
+    );
+    setTreeColors({
+      ...snapshot.treeColors,
+    });
+    setPngTransparent(
+      snapshot.pngTransparent,
+    );
+    setSelectedItem(null);
+    setActiveSound(null);
+    setReplaceOnNextIpa(false);
+    setIpaOpen(false);
+  }
+
+  function undo() {
+    if (!canUndo) {
+      setStatus(
+        "Nothing to undo.",
+      );
+      return;
+    }
+
+    historyIndexRef.current -= 1;
+    restoreSnapshot(
+      historyRef.current[
+        historyIndexRef.current
+      ],
+    );
+    setHistoryVersion(
+      (previous) =>
+        previous + 1,
+    );
+    setStatus("Undid last change.");
+  }
+
+  function redo() {
+    if (!canRedo) {
+      setStatus(
+        "Nothing to redo.",
+      );
+      return;
+    }
+
+    historyIndexRef.current += 1;
+    restoreSnapshot(
+      historyRef.current[
+        historyIndexRef.current
+      ],
+    );
+    setHistoryVersion(
+      (previous) =>
+        previous + 1,
+    );
+    setStatus("Redid change.");
+  }
+
+  function centerTree(
+    behavior: ScrollBehavior =
+      "smooth",
+  ) {
+    const scroller =
+      canvasScrollRef.current;
+
+    if (!scroller) {
+      return;
+    }
+
+    window.requestAnimationFrame(
+      () => {
+        scroller.scrollTo({
+          left: Math.max(
+            0,
+            (
+              scroller.scrollWidth -
+              scroller.clientWidth
+            ) / 2,
+          ),
+          behavior,
+        });
+      },
+    );
+  }
+
+  function fitAndCenterTree() {
+    setZoom(1);
+    centerTree("smooth");
+    setStatus(
+      "Tree fitted and centered.",
+    );
+  }
+
+  function resetTypography() {
+    setTreeFontSize(20);
+    setTreeBold(false);
+    setTreeItalic(false);
+    setStatus(
+      "Tree typography reset.",
+    );
+  }
+
+  function updateTreeColor(
+    key: TreeColorKey,
+    value: string,
+  ) {
+    setTreeColors(
+      (previous) => ({
+        ...previous,
+        [key]: value,
+      }),
+    );
+  }
+
+  function resetTreeColors() {
+    setTreeColors({
+      ...defaultTreeColors,
+    });
+    setStatus(
+      "Tree colours reset.",
+    );
+  }
+
+  useEffect(() => {
+    centerTree("smooth");
+  }, [
+    layout.width,
+    layout.height,
+    zoom,
+  ]);
+
+  useEffect(() => {
+    function handleKeyboardShortcut(
+      event: KeyboardEvent,
+    ) {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLowerCase() === "z"
+      ) {
+        event.preventDefault();
+
+        if (event.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+        return;
+      }
+
+      if (event.key !== "Delete") {
+        return;
+      }
+
+      const target =
+        event.target as HTMLElement | null;
+
+      if (
+        target?.matches(
+          "input, textarea, select, [contenteditable='true']",
+        )
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      deleteSelectedItem();
+    }
+
+    window.addEventListener(
+      "keydown",
+      handleKeyboardShortcut,
+    );
+
+    return () =>
+      window.removeEventListener(
+        "keydown",
+        handleKeyboardShortcut,
+      );
+  });
 
   function getSvgPoint(
     clientX: number,
@@ -1285,7 +2355,78 @@ function App() {
 
     setSelectedItem(null);
     setActiveSound(null);
+    setReplaceOnNextIpa(false);
     setIpaOpen(false);
+  }
+
+  function deleteSelectedItem() {
+    if (!selectedItem) {
+      setStatus(
+        "Select a syllable, branch, or sound box first.",
+      );
+      return;
+    }
+
+    if (
+      selectedItem.type ===
+      "syllable"
+    ) {
+      deleteSyllable(
+        selectedItem.syllableId,
+      );
+      return;
+    }
+
+    if (
+      selectedItem.type ===
+      "branch"
+    ) {
+      if (
+        selectedItem.field ===
+        "nucleus"
+      ) {
+        removeBranch(
+          selectedItem.syllableId,
+          "nucleus",
+        );
+        setStatus(
+          "The required nucleus was cleared.",
+        );
+      } else {
+        removeBranch(
+          selectedItem.syllableId,
+          selectedItem.field,
+        );
+      }
+      return;
+    }
+
+    if (
+      selectedItem.type ===
+      "segment"
+    ) {
+      removeSegment(
+        selectedItem.syllableId,
+        selectedItem.field,
+        selectedItem.index,
+      );
+      setSelectedItem(null);
+      setStatus(
+        "Sound box deleted.",
+      );
+      return;
+    }
+
+    setSharedSegment(
+      selectedItem.syllableId,
+      "",
+    );
+    setSelectedItem(null);
+    setActiveSound(null);
+    setIpaOpen(false);
+    setStatus(
+      "Shared sound box deleted.",
+    );
   }
 
   function setSharedSegment(
@@ -1314,6 +2455,7 @@ function App() {
     sound: ActiveSound,
   ) {
     setActiveSound(sound);
+    setReplaceOnNextIpa(true);
     setIpaOpen(true);
 
     if (
@@ -1410,8 +2552,122 @@ function App() {
       return;
     }
 
-    setActiveSoundValue(
-      `${getActiveSoundValue()}${symbol}`,
+    if (
+      activeSound.type ===
+      "shared"
+    ) {
+      setActiveSoundValue(
+        combiningIpaSymbols.has(
+          symbol,
+        )
+          ? `${getActiveSoundValue()}${symbol}`
+          : symbol,
+      );
+      setReplaceOnNextIpa(false);
+
+      return;
+    }
+
+    if (
+      combiningIpaSymbols.has(
+        symbol,
+      )
+    ) {
+      setActiveSoundValue(
+        `${getActiveSoundValue()}${symbol}`,
+      );
+      setReplaceOnNextIpa(false);
+
+      return;
+    }
+
+    const current =
+      getActiveSoundValue();
+
+    if (
+      !current ||
+      replaceOnNextIpa
+    ) {
+      setActiveSoundValue(
+        symbol,
+      );
+      setReplaceOnNextIpa(false);
+      setStatus(
+        current && replaceOnNextIpa
+          ? "Selected sound replaced."
+          : "Sound inserted.",
+      );
+
+      return;
+    }
+
+    const nextIndex =
+      activeSound.index + 1;
+
+    setSyllables(
+      (previous) =>
+        previous.map(
+          (syllable) => {
+            if (
+              syllable.id !==
+              activeSound.syllableId
+            ) {
+              return syllable;
+            }
+
+            const segments = [
+              ...syllable[
+                activeSound.field
+              ],
+            ];
+
+            segments.splice(
+              nextIndex,
+              0,
+              symbol,
+            );
+
+            return {
+              ...syllable,
+              [activeSound.field]:
+                segments,
+              ...(activeSound.field ===
+              "onset"
+                ? {
+                    hasOnset:
+                      true,
+                  }
+                : {}),
+              ...(activeSound.field ===
+              "coda"
+                ? {
+                    hasCoda:
+                      true,
+                  }
+                : {}),
+            };
+          },
+        ),
+    );
+
+    setActiveSound({
+      ...activeSound,
+      index: nextIndex,
+    });
+
+    setSelectedItem({
+      type: "segment",
+      syllableId:
+        activeSound.syllableId,
+      field:
+        activeSound.field,
+      index: nextIndex,
+    });
+
+    setReplaceOnNextIpa(false);
+
+    setStatus(
+      "A new terminal branch was created automatically.",
     );
   }
 
@@ -1419,6 +2675,7 @@ function App() {
     const current =
       getActiveSoundValue();
 
+    setReplaceOnNextIpa(false);
     setActiveSoundValue(
       Array.from(current)
         .slice(0, -1)
@@ -1624,6 +2881,26 @@ function App() {
       return;
     }
 
+    const sourceSyllable =
+      syllables[sourceIndex];
+
+    const sourceSegments =
+      drag.field === "coda"
+        ? sourceSyllable.coda
+        : sourceSyllable.onset;
+
+    const sourceSound =
+      sourceSegments.length === 1
+        ? sourceSegments[0].trim()
+        : "";
+
+    if (!sourceSound) {
+      setStatus(
+        "Ambisyllabicity requires a source onset or coda with exactly one sound.",
+      );
+      return;
+    }
+
     const leftIndex =
       drag.field === "coda"
         ? sourceIndex
@@ -1640,20 +2917,7 @@ function App() {
     setSyllables(
       (previous) => {
         const next =
-          previous.map(
-            (syllable) => ({
-              ...syllable,
-              onset: [
-                ...syllable.onset,
-              ],
-              nucleus: [
-                ...syllable.nucleus,
-              ],
-              coda: [
-                ...syllable.coda,
-              ],
-            }),
-          );
+          cloneSyllables(previous);
 
         const left =
           next[leftIndex];
@@ -1661,46 +2925,52 @@ function App() {
         const right =
           next[leftIndex + 1];
 
-        const codaValue =
-          left.coda.at(-1) ?? "";
+        if (drag.field === "coda") {
+          left.coda = [];
+          left.hasCoda = false;
 
-        const onsetValue =
-          right.onset[0] ?? "";
-
-        const shared =
-          codaValue ||
-          onsetValue ||
-          "x";
-
-        if (
-          codaValue &&
-          codaValue === shared
-        ) {
-          left.coda =
-            left.coda.slice(
-              0,
-              -1,
+          const matchingOnsetIndex =
+            right.onset.findIndex(
+              (segment) =>
+                segment.trim() ===
+                sourceSound,
             );
-        }
 
-        if (
-          onsetValue &&
-          onsetValue === shared
-        ) {
-          right.onset =
-            right.onset.slice(
+          if (
+            matchingOnsetIndex >= 0
+          ) {
+            right.onset.splice(
+              matchingOnsetIndex,
               1,
             );
+            right.hasOnset =
+              right.onset.length > 0;
+          }
+        } else {
+          right.onset = [];
+          right.hasOnset = false;
+
+          const matchingCodaIndex =
+            left.coda.findIndex(
+              (segment) =>
+                segment.trim() ===
+                sourceSound,
+            );
+
+          if (
+            matchingCodaIndex >= 0
+          ) {
+            left.coda.splice(
+              matchingCodaIndex,
+              1,
+            );
+            left.hasCoda =
+              left.coda.length > 0;
+          }
         }
 
-        left.hasCoda =
-          left.coda.length > 0;
-
-        right.hasOnset =
-          right.onset.length > 0;
-
         left.sharedToNext =
-          shared;
+          sourceSound;
 
         return normalizeSyllables(
           next,
@@ -1713,20 +2983,18 @@ function App() {
 
     setSelectedItem({
       type: "shared",
-      syllableId:
-        leftId,
+      syllableId: leftId,
     });
 
     setActiveSound({
       type: "shared",
-      syllableId:
-        leftId,
+      syllableId: leftId,
     });
 
     setIpaOpen(true);
 
     setStatus(
-      "Ambisyllabicity created. Edit the shared sound directly.",
+      "The existing single sound is now ambisyllabic; no duplicate symbol was created.",
     );
   }
 
@@ -1762,6 +3030,7 @@ function App() {
             dragState.syllableId,
         });
         setActiveSound(null);
+        setReplaceOnNextIpa(false);
         setIpaOpen(false);
         setStatus(
           "Syllable selected.",
@@ -1845,22 +3114,30 @@ function App() {
     );
   }
 
-  function startBlank() {
-    setWord("word");
+  function resetCanvas() {
+    setWord("Wd");
     setSyllables([
       createSyllable({
+        nucleus: [""],
         primary: true,
       }),
     ]);
     setSelectedItem(null);
     setActiveSound(null);
     setIpaOpen(false);
+    setZoom(1);
     setStatus(
-      "Blank tree created.",
+      "Canvas reset to one blank syllable.",
     );
   }
 
-  function getSvgMarkup(): string {
+  function startBlank() {
+    resetCanvas();
+  }
+
+  function getSvgMarkup(
+    transparentBackground = false,
+  ): string {
     const svg = svgRef.current;
 
     if (!svg) {
@@ -1889,6 +3166,17 @@ function App() {
       String(layout.height),
     );
 
+    if (transparentBackground) {
+      clone
+        .querySelectorAll(
+          "[data-canvas-background='true']",
+        )
+        .forEach(
+          (element) =>
+            element.remove(),
+        );
+    }
+
     clone
       .querySelectorAll(
         "[data-ui-only='true']",
@@ -1897,6 +3185,32 @@ function App() {
         (element) =>
           element.remove(),
       );
+
+    clone
+      .querySelectorAll<SVGElement>(
+        "[data-export-fill]",
+      )
+      .forEach((element) => {
+        element.setAttribute(
+          "fill",
+          element.getAttribute(
+            "data-export-fill",
+          ) ?? "transparent",
+        );
+      });
+
+    clone
+      .querySelectorAll<SVGElement>(
+        "[data-export-stroke]",
+      )
+      .forEach((element) => {
+        element.setAttribute(
+          "stroke",
+          element.getAttribute(
+            "data-export-stroke",
+          ) ?? "transparent",
+        );
+      });
 
     clone
       .querySelectorAll(
@@ -1949,12 +3263,23 @@ function App() {
 
         text.setAttribute(
           "font-family",
-          '"Segoe UI", "Arial Unicode MS", sans-serif',
+          element.getAttribute(
+            "data-font-family",
+          ) ?? selectedFont.css,
         );
 
         text.setAttribute(
           "font-weight",
-          "800",
+          element.getAttribute(
+            "data-font-weight",
+          ) ?? "800",
+        );
+
+        text.setAttribute(
+          "font-style",
+          element.getAttribute(
+            "data-font-style",
+          ) ?? "normal",
         );
 
         text.textContent =
@@ -1962,8 +3287,70 @@ function App() {
             "data-export-label",
           ) || "∅";
 
+        const group =
+          document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "g",
+          );
+
+        if (
+          element.getAttribute(
+            "data-export-box",
+          ) === "rect"
+        ) {
+          const rectangle =
+            document.createElementNS(
+              "http://www.w3.org/2000/svg",
+              "rect",
+            );
+
+          rectangle.setAttribute(
+            "x",
+            element.getAttribute("x") ?? "0",
+          );
+          rectangle.setAttribute(
+            "y",
+            element.getAttribute("y") ?? "0",
+          );
+          rectangle.setAttribute(
+            "width",
+            element.getAttribute("width") ?? "0",
+          );
+          rectangle.setAttribute(
+            "height",
+            element.getAttribute("height") ?? "0",
+          );
+          rectangle.setAttribute(
+            "rx",
+            element.getAttribute(
+              "data-export-box-radius",
+            ) ?? "0",
+          );
+          rectangle.setAttribute(
+            "fill",
+            element.getAttribute(
+              "data-export-box-fill",
+            ) ?? "transparent",
+          );
+          rectangle.setAttribute(
+            "stroke",
+            element.getAttribute(
+              "data-export-box-stroke",
+            ) ?? "transparent",
+          );
+          rectangle.setAttribute(
+            "stroke-width",
+            "1.5",
+          );
+          group.appendChild(
+            rectangle,
+          );
+        }
+
+        group.appendChild(text);
+
         element.parentNode?.replaceChild(
-          text,
+          group,
           element,
         );
       });
@@ -2034,7 +3421,7 @@ function App() {
     try {
       const blob =
         new Blob(
-          [getSvgMarkup()],
+          [getSvgMarkup(pngTransparent)],
           {
             type: "image/svg+xml",
           },
@@ -2126,12 +3513,41 @@ function App() {
     }
   }
 
+  function getFullLatex(): string {
+    return makeFullLatex(
+      word,
+      syllables,
+      {
+        fontChoice:
+          fontFamily,
+        fontSize:
+          treeFontSize,
+        bold: treeBold,
+        italic:
+          treeItalic,
+        plainStyle,
+      },
+    );
+  }
+
+  function downloadLatex() {
+    downloadBlob(
+      new Blob(
+        [getFullLatex()],
+        {
+          type: "application/x-tex;charset=utf-8",
+        },
+      ),
+      `${safeFilename()}-tree.tex`,
+    );
+    setStatus(
+      "Complete LaTeX document downloaded.",
+    );
+  }
+
   async function copyLatex() {
     const latex =
-      makeLatexTree(
-        word,
-        syllables,
-      );
+      getFullLatex();
 
     try {
       await navigator.clipboard.writeText(
@@ -2139,7 +3555,7 @@ function App() {
       );
 
       setStatus(
-        "Forest LaTeX copied.",
+        "Complete LaTeX document copied.",
       );
     } catch {
       const textarea =
@@ -2158,7 +3574,7 @@ function App() {
       textarea.remove();
 
       setStatus(
-        "Forest LaTeX copied.",
+        "Complete LaTeX document copied.",
       );
     }
   }
@@ -2192,13 +3608,14 @@ function App() {
       return {
         fill:
           selected
-            ? "#df6b55"
-            : "#faece8",
-        stroke: "#df6b55",
+            ? treeColors.syllableOutline
+            : treeColors.syllableFill,
+        stroke:
+          treeColors.syllableOutline,
         text:
           selected
-            ? "#ffffff"
-            : "#b94f3d",
+            ? treeColors.wordText
+            : treeColors.syllableText,
       };
     }
 
@@ -2208,31 +3625,29 @@ function App() {
     ) {
       return {
         fill:
-          selected ||
-          dragTarget
-            ? "#269688"
-            : "#e6f3f1",
-        stroke: "#269688",
+          selected || dragTarget
+            ? treeColors.onsetRhymeOutline
+            : treeColors.onsetRhymeFill,
+        stroke:
+          treeColors.onsetRhymeOutline,
         text:
-          selected ||
-          dragTarget
-            ? "#ffffff"
-            : "#1d746a",
+          selected || dragTarget
+            ? treeColors.wordText
+            : treeColors.onsetRhymeText,
       };
     }
 
     return {
       fill:
-        selected ||
-        dragTarget
-          ? "#2f7ca8"
-          : "#e8f1f6",
-      stroke: "#2f7ca8",
+        selected || dragTarget
+          ? treeColors.nucleusCodaOutline
+          : treeColors.nucleusCodaFill,
+      stroke:
+        treeColors.nucleusCodaOutline,
       text:
-        selected ||
-        dragTarget
-          ? "#ffffff"
-          : "#246587",
+        selected || dragTarget
+          ? treeColors.wordText
+          : treeColors.nucleusCodaText,
     };
   }
 
@@ -2244,6 +3659,20 @@ function App() {
     x: number,
     y: number,
   ) {
+    const terminalWidth =
+      Math.max(
+        plainStyle ? 70 : 82,
+        treeFontSize *
+          (plainStyle ? 3.4 : 4.0),
+      );
+
+    const terminalHeight =
+      Math.max(
+        plainStyle ? 40 : 44,
+        treeFontSize *
+          (plainStyle ? 1.9 : 2.05),
+      );
+
     const selected =
       selectedItem?.type ===
         "segment" &&
@@ -2257,10 +3686,16 @@ function App() {
     return (
       <foreignObject
         key={`${syllable.id}-${field}-${index}`}
-        x={x - 35}
-        y={y - 20}
-        width="70"
-        height="40"
+        x={
+          x -
+          terminalWidth / 2
+        }
+        y={
+          y -
+          terminalHeight / 2
+        }
+        width={terminalWidth}
+        height={terminalHeight}
         data-x={String(x)}
         data-y={String(y)}
         data-export-label={
@@ -2269,9 +3704,36 @@ function App() {
         data-fill={
           plainStyle
             ? "#111111"
-            : "#b94f3d"
+            : treeColors.terminalText
         }
-        data-font-size="23"
+        data-export-box="rect"
+        data-export-box-fill={
+          plainStyle
+            ? "transparent"
+            : treeColors.terminalFill
+        }
+        data-export-box-stroke={
+          plainStyle
+            ? "transparent"
+            : treeColors.terminalOutline
+        }
+        data-export-box-radius="10"
+        data-font-size={String(
+          treeFontSize,
+        )}
+        data-font-weight={
+          treeBold
+            ? "800"
+            : "400"
+        }
+        data-font-style={
+          treeItalic
+            ? "italic"
+            : "normal"
+        }
+        data-font-family={
+          selectedFont.css
+        }
       >
         <input
           className={`terminal-input ${
@@ -2295,14 +3757,57 @@ function App() {
               index,
             })
           }
-          onChange={(event) =>
+          onChange={(event) => {
+            setReplaceOnNextIpa(false);
             updateSegment(
               syllable.id,
               field,
               index,
               event.target.value,
-            )
-          }
+            );
+          }}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Delete"
+            ) {
+              event.preventDefault();
+              removeSegment(
+                syllable.id,
+                field,
+                index,
+              );
+              setSelectedItem(null);
+              setStatus(
+                "Sound box deleted.",
+              );
+            }
+          }}
+          style={{
+            fontSize:
+              `${treeFontSize}px`,
+            fontWeight:
+              treeBold
+                ? 800
+                : 400,
+            fontStyle:
+              treeItalic
+                ? "italic"
+                : "normal",
+            fontFamily:
+              selectedFont.css,
+            color:
+              plainStyle
+                ? "#111111"
+                : treeColors.terminalText,
+            background:
+              plainStyle
+                ? "transparent"
+                : treeColors.terminalFill,
+            borderColor:
+              plainStyle
+                ? "transparent"
+                : treeColors.terminalOutline,
+          }}
         />
       </foreignObject>
     );
@@ -2311,7 +3816,7 @@ function App() {
   const lineColor =
     plainStyle
       ? "#111111"
-      : "#268b72";
+      : treeColors.line;
 
   const branchDrag =
     dragState?.kind ===
@@ -2326,22 +3831,56 @@ function App() {
         )
       : null;
 
+  const nodeRadius =
+    Math.max(
+      21,
+      treeFontSize * 0.95,
+    );
+
+  const sigmaRadius =
+    nodeRadius + 3;
+
+  const wordBoxWidth =
+    Math.max(
+      200,
+      Math.min(
+        layout.width * 0.55,
+        word.length *
+          treeFontSize *
+          0.72 +
+          64,
+      ),
+    );
+
+  const wordBoxHeight =
+    Math.max(
+      48,
+      treeFontSize * 2.25,
+    );
+
+  const treeFontWeight =
+    treeBold
+      ? "800"
+      : "400";
+
+  const treeFontStyle =
+    treeItalic
+      ? "italic"
+      : "normal";
+
   return (
     <div className="app">
       <header className="app-header">
         <div>
-          <p className="version-badge">
-            V5 SIMPLIFIED CANVAS
-          </p>
 
           <h1>
             Syllable Tree Builder
           </h1>
 
           <p>
-            Work directly in the tree.
-            Controls appear only for the
-            item you select.
+            Work directly in the tree. The
+            canvas automatically balances,
+            fits, and recenters after edits.
           </p>
         </div>
 
@@ -2427,7 +3966,24 @@ function App() {
             </button>
 
             {exportOpen && (
-              <div className="action-menu">
+              <div className="action-menu export-menu">
+                <label className="export-option">
+                  <input
+                    type="checkbox"
+                    checked={
+                      pngTransparent
+                    }
+                    onChange={(event) =>
+                      setPngTransparent(
+                        event.target.checked,
+                      )
+                    }
+                  />
+
+                  <span>
+                    Transparent PNG background
+                  </span>
+                </label>
                 <button
                   type="button"
                   onClick={
@@ -2449,10 +4005,19 @@ function App() {
                 <button
                   type="button"
                   onClick={
+                    downloadLatex
+                  }
+                >
+                  Download full LaTeX
+                </button>
+
+                <button
+                  type="button"
+                  onClick={
                     copyLatex
                   }
                 >
-                  Copy LaTeX
+                  Copy full LaTeX
                 </button>
               </div>
             )}
@@ -2479,17 +4044,416 @@ function App() {
 
       <section className="canvas-card">
         <div
+          className="tree-toolbar"
+          role="toolbar"
+          aria-label="Tree formatting and view controls"
+        >
+          <div className="toolbar-group">
+            <span className="toolbar-label">
+              Edit
+            </span>
+
+            <button
+              type="button"
+              className="toolbar-text-button"
+              disabled={!canUndo}
+              title="Undo (Ctrl+Z)"
+              onClick={undo}
+            >
+              ↶ Undo
+            </button>
+
+            <button
+              type="button"
+              className="toolbar-text-button"
+              disabled={!canRedo}
+              title="Redo (Ctrl+Shift+Z)"
+              onClick={redo}
+            >
+              ↷ Redo
+            </button>
+
+            <button
+              type="button"
+              className="toolbar-text-button danger-button"
+              onClick={resetCanvas}
+            >
+              Reset canvas
+            </button>
+          </div>
+
+          <div className="toolbar-divider" />
+
+          <div className="toolbar-group">
+            <span className="toolbar-label">
+              View
+            </span>
+
+            <button
+              type="button"
+              title="Zoom out"
+              onClick={() =>
+                setZoom(
+                  (previous) =>
+                    Math.max(
+                      0.65,
+                      previous - 0.1,
+                    ),
+                )
+              }
+            >
+              −
+            </button>
+
+            <output>
+              {Math.round(
+                zoom * 100,
+              )}
+              %
+            </output>
+
+            <button
+              type="button"
+              title="Zoom in"
+              onClick={() =>
+                setZoom(
+                  (previous) =>
+                    Math.min(
+                      1.8,
+                      previous + 0.1,
+                    ),
+                )
+              }
+            >
+              +
+            </button>
+
+            <button
+              type="button"
+              className="toolbar-text-button"
+              onClick={
+                fitAndCenterTree
+              }
+            >
+              Fit & center
+            </button>
+          </div>
+
+          <div className="toolbar-divider" />
+
+          <div className="toolbar-group">
+            <label className="font-family-control">
+              <span>
+                Font
+              </span>
+
+              <select
+                value={fontFamily}
+                onChange={(event) =>
+                  setFontFamily(
+                    event.target
+                      .value as FontChoice,
+                  )
+                }
+              >
+                {fontOptions.map(
+                  (option) => (
+                    <option
+                      key={option.id}
+                      value={option.id}
+                    >
+                      {option.label}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+
+            <label className="font-size-control">
+              <span>
+                Font size
+              </span>
+
+              <input
+                type="range"
+                min="12"
+                max="30"
+                step="1"
+                value={
+                  treeFontSize
+                }
+                onChange={(event) =>
+                  setTreeFontSize(
+                    Number(
+                      event.target
+                        .value,
+                    ),
+                  )
+                }
+              />
+
+              <input
+                type="number"
+                min="12"
+                max="30"
+                value={
+                  treeFontSize
+                }
+                onChange={(event) =>
+                  setTreeFontSize(
+                    Math.min(
+                      30,
+                      Math.max(
+                        12,
+                        Number(
+                          event.target
+                            .value,
+                        ) || 12,
+                      ),
+                    ),
+                  )
+                }
+                aria-label="Tree font size"
+              />
+            </label>
+
+            <button
+              type="button"
+              className={`format-button ${
+                treeBold
+                  ? "active"
+                  : ""
+              }`}
+              aria-pressed={
+                treeBold
+              }
+              title="Bold tree text"
+              onClick={() =>
+                setTreeBold(
+                  (previous) =>
+                    !previous,
+                )
+              }
+            >
+              B
+            </button>
+
+            <button
+              type="button"
+              className={`format-button italic-button ${
+                treeItalic
+                  ? "active"
+                  : ""
+              }`}
+              aria-pressed={
+                treeItalic
+              }
+              title="Italic tree text"
+              onClick={() =>
+                setTreeItalic(
+                  (previous) =>
+                    !previous,
+                )
+              }
+            >
+              I
+            </button>
+
+            <button
+              type="button"
+              className="toolbar-text-button"
+              onClick={
+                resetTypography
+              }
+            >
+              Reset text
+            </button>
+
+            <div className="color-editor-wrapper">
+              <button
+                type="button"
+                className={`toolbar-text-button ${
+                  colorsOpen
+                    ? "active"
+                    : ""
+                }`}
+                aria-expanded={
+                  colorsOpen
+                }
+                onClick={() =>
+                  setColorsOpen(
+                    (previous) =>
+                      !previous,
+                  )
+                }
+              >
+                Colours
+              </button>
+
+              {colorsOpen && (
+                <div className="color-editor-popover">
+                  <div className="color-editor-heading">
+                    <div>
+                      <strong>
+                        Tree colours
+                      </strong>
+
+                      <span>
+                        Changes appear in the canvas, PNG, and SVG.
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={
+                        resetTreeColors
+                      }
+                    >
+                      Reset
+                    </button>
+                  </div>
+
+                  <div className="color-general-grid">
+                    <label>
+                      <span>
+                        Canvas
+                      </span>
+
+                      <input
+                        type="color"
+                        value={
+                          treeColors.canvasBackground
+                        }
+                        onChange={(event) =>
+                          updateTreeColor(
+                            "canvasBackground",
+                            event.target.value,
+                          )
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      <span>
+                        Lines
+                      </span>
+
+                      <input
+                        type="color"
+                        value={
+                          treeColors.line
+                        }
+                        onChange={(event) =>
+                          updateTreeColor(
+                            "line",
+                            event.target.value,
+                          )
+                        }
+                      />
+                    </label>
+                  </div>
+
+                  <div className="color-grid-heading">
+                    <span>Box</span>
+                    <span>Fill</span>
+                    <span>Border</span>
+                    <span>Text</span>
+                  </div>
+
+                  <div className="color-group-list">
+                    {colorGroups.map(
+                      (group) => (
+                        <div
+                          className="color-group-row"
+                          key={group.label}
+                        >
+                          <strong>
+                            {group.label}
+                          </strong>
+
+                          <input
+                            type="color"
+                            aria-label={`${group.label} fill colour`}
+                            value={
+                              treeColors[
+                                group.fill
+                              ]
+                            }
+                            onChange={(event) =>
+                              updateTreeColor(
+                                group.fill,
+                                event.target.value,
+                              )
+                            }
+                          />
+
+                          <input
+                            type="color"
+                            aria-label={`${group.label} border colour`}
+                            value={
+                              treeColors[
+                                group.outline
+                              ]
+                            }
+                            onChange={(event) =>
+                              updateTreeColor(
+                                group.outline,
+                                event.target.value,
+                              )
+                            }
+                          />
+
+                          <input
+                            type="color"
+                            aria-label={`${group.label} text colour`}
+                            value={
+                              treeColors[
+                                group.text
+                              ]
+                            }
+                            onChange={(event) =>
+                              updateTreeColor(
+                                group.text,
+                                event.target.value,
+                              )
+                            }
+                          />
+                        </div>
+                      ),
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div
           className="canvas-status"
           aria-live="polite"
         >
           {status}
         </div>
 
-        <div className="canvas-scroll">
+        <div
+          ref={canvasScrollRef}
+          className="canvas-scroll"
+        >
           <svg
             ref={svgRef}
             className="tree-canvas"
             viewBox={`0 0 ${layout.width} ${layout.height}`}
+            preserveAspectRatio="xMidYMin meet"
+            style={{
+              width:
+                `${zoom * 100}%`,
+              fontWeight:
+                treeFontWeight,
+              fontStyle:
+                treeFontStyle,
+              fontFamily:
+                selectedFont.css,
+            }}
             role="img"
             aria-label={`Editable syllable tree for ${word}`}
             onPointerMove={
@@ -2505,18 +4469,27 @@ function App() {
             <rect
               width={layout.width}
               height={layout.height}
-              fill="#fffdf9"
+              fill={
+                treeColors.canvasBackground
+              }
+              data-canvas-background="true"
             />
 
             <foreignObject
               x={
-                layout.rootX - 100
+                layout.rootX -
+                wordBoxWidth / 2
               }
               y={
-                layout.rootY - 24
+                layout.rootY -
+                wordBoxHeight / 2
               }
-              width="200"
-              height="48"
+              width={
+                wordBoxWidth
+              }
+              height={
+                wordBoxHeight
+              }
               data-x={String(
                 layout.rootX,
               )}
@@ -2525,14 +4498,39 @@ function App() {
               )}
               data-export-label={
                 word.trim() ||
-                "Word"
+                "Wd"
               }
               data-fill={
                 plainStyle
                   ? "#111111"
-                  : "#ffffff"
+                  : treeColors.wordText
               }
-              data-font-size="18"
+              data-export-box="rect"
+              data-export-box-fill={
+                plainStyle
+                  ? "transparent"
+                  : treeColors.wordFill
+              }
+              data-export-box-stroke={
+                plainStyle
+                  ? "transparent"
+                  : treeColors.wordOutline
+              }
+              data-export-box-radius={String(
+                wordBoxHeight / 2,
+              )}
+              data-font-size={String(
+                treeFontSize,
+              )}
+              data-font-weight={
+                treeFontWeight
+              }
+              data-font-style={
+                treeFontStyle
+              }
+              data-font-family={
+                selectedFont.css
+              }
             >
               <input
                 className={`word-input ${
@@ -2548,6 +4546,32 @@ function App() {
                       .value,
                   )
                 }
+                style={{
+                  fontSize:
+                    `${treeFontSize}px`,
+                  fontWeight:
+                    treeBold
+                      ? 800
+                      : 400,
+                  fontStyle:
+                    treeItalic
+                      ? "italic"
+                      : "normal",
+                  fontFamily:
+                    selectedFont.css,
+                  color:
+                    plainStyle
+                      ? "#111111"
+                      : treeColors.wordText,
+                  background:
+                    plainStyle
+                      ? "transparent"
+                      : treeColors.wordFill,
+                  borderColor:
+                    plainStyle
+                      ? "transparent"
+                      : treeColors.wordOutline,
+                }}
               />
             </foreignObject>
 
@@ -2633,10 +4657,14 @@ function App() {
                   );
 
                 const wordStartY =
-                  layout.rootY + 26;
+                  layout.rootY +
+                  wordBoxHeight / 2 +
+                  2;
 
                 const sigmaEndY =
-                  layout.sigmaY - 26;
+                  layout.sigmaY -
+                  sigmaRadius -
+                  2;
 
                 const stressLines =
                   column.syllable.primary
@@ -2649,16 +4677,23 @@ function App() {
                     : null;
 
                 const onsetSpacing =
-                  66;
+                  plainStyle
+                    ? 66
+                    : 86;
 
                 const nucleusSpacing =
-                  66;
+                  plainStyle
+                    ? 66
+                    : 86;
 
                 const codaSpacing =
-                  66;
+                  plainStyle
+                    ? 66
+                    : 86;
 
                 return (
                   <g
+                    className="animated-tree-column"
                     key={
                       column.syllable
                         .id
@@ -2671,6 +4706,9 @@ function App() {
                           stroke={
                             lineColor
                           }
+                          data-export-stroke={
+                            lineColor
+                          }
                           strokeWidth="2.8"
                           strokeLinecap="round"
                         />
@@ -2678,6 +4716,9 @@ function App() {
                         <line
                           {...stressLines[1]}
                           stroke={
+                            lineColor
+                          }
+                          data-export-stroke={
                             lineColor
                           }
                           strokeWidth="2.8"
@@ -2701,6 +4742,9 @@ function App() {
                         stroke={
                           lineColor
                         }
+                        data-export-stroke={
+                          lineColor
+                        }
                         strokeWidth="2.8"
                         strokeLinecap="round"
                       />
@@ -2713,12 +4757,24 @@ function App() {
                       cy={
                         layout.sigmaY
                       }
-                      r="24"
+                      r={
+                        sigmaRadius
+                      }
                       fill={
                         sigmaStyle.fill
                       }
                       stroke={
                         sigmaStyle.stroke
+                      }
+                      data-export-fill={
+                        nodeStyle(
+                          "syllable",
+                        ).fill
+                      }
+                      data-export-stroke={
+                        nodeStyle(
+                          "syllable",
+                        ).stroke
                       }
                       strokeWidth="2"
                       className="tree-node sigma-node"
@@ -2745,8 +4801,20 @@ function App() {
                       fill={
                         sigmaStyle.text
                       }
-                      fontSize="23"
-                      fontWeight="800"
+                      data-export-fill={
+                        nodeStyle(
+                          "syllable",
+                        ).text
+                      }
+                      fontSize={
+                        treeFontSize + 3
+                      }
+                      fontWeight={
+                        treeFontWeight
+                      }
+                      fontStyle={
+                        treeFontStyle
+                      }
                       pointerEvents="none"
                     >
                       σ
@@ -2839,6 +4907,9 @@ function App() {
                           stroke={
                             lineColor
                           }
+                          data-export-stroke={
+                            lineColor
+                          }
                           strokeWidth="2.7"
                           strokeLinecap="round"
                         />
@@ -2850,12 +4921,24 @@ function App() {
                           cy={
                             layout.branchY
                           }
-                          r="21"
+                          r={
+                            nodeRadius
+                          }
                           fill={
                             onsetStyle.fill
                           }
                           stroke={
                             onsetStyle.stroke
+                          }
+                          data-export-fill={
+                            nodeStyle(
+                              "onset",
+                            ).fill
+                          }
+                          data-export-stroke={
+                            nodeStyle(
+                              "onset",
+                            ).stroke
                           }
                           strokeWidth="2"
                           className="tree-node branch-node"
@@ -2884,8 +4967,20 @@ function App() {
                           fill={
                             onsetStyle.text
                           }
-                          fontSize="20"
-                          fontWeight="800"
+                          data-export-fill={
+                            nodeStyle(
+                              "onset",
+                            ).text
+                          }
+                          fontSize={
+                            treeFontSize
+                          }
+                          fontWeight={
+                            treeFontWeight
+                          }
+                          fontStyle={
+                            treeFontStyle
+                          }
                           pointerEvents="none"
                         >
                           O
@@ -2991,6 +5086,7 @@ function App() {
                     ) : (
                       <g
                         className="ghost-node"
+                        data-ui-only="true"
                         onClick={() => {
                           setBranchVisible(
                             column
@@ -3058,8 +5154,18 @@ function App() {
                           textAnchor="middle"
                           dominantBaseline="middle"
                           fill="#78716c"
-                          fontSize="14"
-                          fontWeight="800"
+                          fontSize={
+                            Math.max(
+                              13,
+                              treeFontSize - 5,
+                            )
+                          }
+                          fontWeight={
+                            treeFontWeight
+                          }
+                          fontStyle={
+                            treeFontStyle
+                          }
                         >
                           +O
                         </text>
@@ -3095,7 +5201,9 @@ function App() {
                       cy={
                         layout.branchY
                       }
-                      r="21"
+                      r={
+                        nodeRadius
+                      }
                       fill={
                         rhymeStyle.fill
                       }
@@ -3117,8 +5225,15 @@ function App() {
                       fill={
                         rhymeStyle.text
                       }
-                      fontSize="20"
-                      fontWeight="800"
+                      fontSize={
+                        treeFontSize
+                      }
+                      fontWeight={
+                        treeFontWeight
+                      }
+                      fontStyle={
+                        treeFontStyle
+                      }
                     >
                       R
                     </text>
@@ -3152,7 +5267,9 @@ function App() {
                       cy={
                         layout.subbranchY
                       }
-                      r="21"
+                      r={
+                        nodeRadius
+                      }
                       fill={
                         nucleusStyle.fill
                       }
@@ -3189,8 +5306,15 @@ function App() {
                       fill={
                         nucleusStyle.text
                       }
-                      fontSize="20"
-                      fontWeight="800"
+                      fontSize={
+                        treeFontSize
+                      }
+                      fontWeight={
+                        treeFontWeight
+                      }
+                      fontStyle={
+                        treeFontStyle
+                      }
                       pointerEvents="none"
                     >
                       N
@@ -3313,6 +5437,9 @@ function App() {
                           stroke={
                             lineColor
                           }
+                          data-export-stroke={
+                            lineColor
+                          }
                           strokeWidth="2.6"
                           strokeLinecap="round"
                         />
@@ -3324,12 +5451,24 @@ function App() {
                           cy={
                             layout.subbranchY
                           }
-                          r="21"
+                          r={
+                            nodeRadius
+                          }
                           fill={
                             codaStyle.fill
                           }
                           stroke={
                             codaStyle.stroke
+                          }
+                          data-export-fill={
+                            nodeStyle(
+                              "coda",
+                            ).fill
+                          }
+                          data-export-stroke={
+                            nodeStyle(
+                              "coda",
+                            ).stroke
                           }
                           strokeWidth="2"
                           className="tree-node branch-node"
@@ -3358,8 +5497,20 @@ function App() {
                           fill={
                             codaStyle.text
                           }
-                          fontSize="20"
-                          fontWeight="800"
+                          data-export-fill={
+                            nodeStyle(
+                              "coda",
+                            ).text
+                          }
+                          fontSize={
+                            treeFontSize
+                          }
+                          fontWeight={
+                            treeFontWeight
+                          }
+                          fontStyle={
+                            treeFontStyle
+                          }
                           pointerEvents="none"
                         >
                           C
@@ -3465,6 +5616,7 @@ function App() {
                     ) : (
                       <g
                         className="ghost-node"
+                        data-ui-only="true"
                         onClick={() => {
                           setBranchVisible(
                             column
@@ -3532,8 +5684,18 @@ function App() {
                           textAnchor="middle"
                           dominantBaseline="middle"
                           fill="#78716c"
-                          fontSize="14"
-                          fontWeight="800"
+                          fontSize={
+                            Math.max(
+                              13,
+                              treeFontSize - 5,
+                            )
+                          }
+                          fontWeight={
+                            treeFontWeight
+                          }
+                          fontStyle={
+                            treeFontStyle
+                          }
                         >
                           +C
                         </text>
@@ -3641,9 +5803,32 @@ function App() {
                         data-fill={
                           plainStyle
                             ? "#111111"
-                            : "#a97418"
+                            : treeColors.sharedText
                         }
-                        data-font-size="23"
+                        data-export-box="rect"
+                        data-export-box-fill={
+                          plainStyle
+                            ? "transparent"
+                            : treeColors.sharedFill
+                        }
+                        data-export-box-stroke={
+                          plainStyle
+                            ? "transparent"
+                            : treeColors.sharedOutline
+                        }
+                        data-export-box-radius="10"
+                        data-font-size={String(
+                          treeFontSize,
+                        )}
+                        data-font-weight={
+                          treeFontWeight
+                        }
+                        data-font-style={
+                          treeFontStyle
+                        }
+                        data-font-family={
+                          selectedFont.css
+                        }
                       >
                         <input
                           className={`shared-input ${
@@ -3669,15 +5854,61 @@ function App() {
                           }
                           onChange={(
                             event,
-                          ) =>
+                          ) => {
+                            setReplaceOnNextIpa(false);
                             setSharedSegment(
                               column
                                 .syllable
                                 .id,
                               event.target
                                 .value,
-                            )
-                          }
+                            );
+                          }}
+                          onKeyDown={(event) => {
+                            if (
+                              event.key === "Delete"
+                            ) {
+                              event.preventDefault();
+                              setSharedSegment(
+                                column
+                                  .syllable
+                                  .id,
+                                "",
+                              );
+                              setSelectedItem(null);
+                              setActiveSound(null);
+                              setIpaOpen(false);
+                              setStatus(
+                                "Shared sound box deleted.",
+                              );
+                            }
+                          }}
+                          style={{
+                            fontSize:
+                              `${treeFontSize}px`,
+                            fontWeight:
+                              treeBold
+                                ? 800
+                                : 400,
+                            fontStyle:
+                              treeItalic
+                                ? "italic"
+                                : "normal",
+                            fontFamily:
+                              selectedFont.css,
+                            color:
+                              plainStyle
+                                ? "#111111"
+                                : treeColors.sharedText,
+                            background:
+                              plainStyle
+                                ? "transparent"
+                                : treeColors.sharedFill,
+                            borderColor:
+                              plainStyle
+                                ? "transparent"
+                                : treeColors.sharedOutline,
+                          }}
                         />
                       </foreignObject>
 
@@ -3819,7 +6050,7 @@ function App() {
           </span>
 
           <span>
-            Click a sound for IPA keys
+            IPA buttons make new branches
           </span>
         </div>
 
@@ -3859,66 +6090,111 @@ function App() {
             <div className="ipa-tabs">
               {(
                 Object.keys(
-                  ipaGroups,
-                ) as IpaGroup[]
-              ).map((group) => (
+                  ipaCharts,
+                ) as IpaChart[]
+              ).map((chart) => (
                 <button
                   type="button"
                   className={
                     ipaGroup ===
-                    group
+                    chart
                       ? "active"
                       : ""
                   }
-                  key={group}
+                  key={chart}
                   onClick={() =>
                     setIpaGroup(
-                      group,
+                      chart,
                     )
                   }
                 >
-                  {group}
+                  {chart}
                 </button>
               ))}
             </div>
 
-            <div className="ipa-keys">
-              {ipaGroups[
+            <div
+              className={`ipa-chart ${
+                ipaGroup ===
+                "Vowels"
+                  ? "vowel-chart"
+                  : ""
+              }`}
+            >
+              {ipaCharts[
                 ipaGroup
-              ].map((symbol) => (
-                <button
-                  type="button"
-                  key={symbol}
-                  onClick={() =>
-                    insertIpa(
-                      symbol,
-                    )
-                  }
+              ].map((row) => (
+                <div
+                  className="ipa-chart-row"
+                  key={row.label}
                 >
-                  {symbol}
-                </button>
-              ))}
+                  <div className="ipa-row-label">
+                    {row.label}
+                  </div>
 
+                  <div className="ipa-row-symbols">
+                    {row.cells.map(
+                      (
+                        cell,
+                        cellIndex,
+                      ) => (
+                        <div
+                          className="ipa-chart-cell"
+                          key={`${row.label}-${cellIndex}`}
+                        >
+                          {cell
+                            .split(
+                              /\s+/,
+                            )
+                            .filter(
+                              Boolean,
+                            )
+                            .map(
+                              (
+                                symbol,
+                              ) => (
+                                <button
+                                  type="button"
+                                  key={`${row.label}-${cellIndex}-${symbol}`}
+                                  onClick={() =>
+                                    insertIpa(
+                                      symbol,
+                                    )
+                                  }
+                                >
+                                  {
+                                    symbol
+                                  }
+                                </button>
+                              ),
+                            )}
+                        </div>
+                      ),
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="ipa-keyboard-functions">
               <button
                 type="button"
-                className="ipa-function"
                 onClick={
                   backspaceIpa
                 }
               >
-                ⌫
+                ⌫ Backspace
               </button>
 
               <button
                 type="button"
-                className="ipa-function"
                 onClick={() =>
                   setActiveSoundValue(
                     "",
                   )
                 }
               >
-                Clear
+                Clear current
               </button>
             </div>
           </section>
