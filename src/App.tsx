@@ -1217,134 +1217,203 @@ function getParallelLines(
 function escapeLatex(
   value: string,
 ): string {
-  return value
-    .replaceAll(
-      "\\",
-      "\\textbackslash{}",
-    )
-    .replaceAll("&", "\\&")
-    .replaceAll("%", "\\%")
-    .replaceAll("$", "\\$")
-    .replaceAll("#", "\\#")
-    .replaceAll("_", "\\_")
-    .replaceAll("{", "\\{")
-    .replaceAll("}", "\\}");
+  const replacements: Record<
+    string,
+    string
+  > = {
+    "\\": "\\textbackslash{}",
+    "{": "\\{",
+    "}": "\\}",
+    "&": "\\&",
+    "%": "\\%",
+    "$": "\\$",
+    "#": "\\#",
+    "_": "\\_",
+    "^": "\\textasciicircum{}",
+    "~": "\\textasciitilde{}",
+  };
+
+  return value.replace(
+    /[\\{}&%$#_^~]/g,
+    (character) =>
+      replacements[character],
+  );
 }
 
-function makeLatexTree(
-  word: string,
-  syllables: readonly Syllable[],
+function escapePdfLatex(
+  value: string,
 ): string {
-  const extraDraws: string[] = [];
+  const tokens: string[] = [];
 
-  const syllableTrees =
-    syllables.map(
-      (syllable, index) => {
-        const previousShared =
-          index > 0
-            ? syllables[
-                index - 1
-              ].sharedToNext.trim()
-            : "";
+  function wrapLast(
+    command: string,
+  ) {
+    const base =
+      tokens.pop() ?? "{}";
 
-        const nextShared =
-          index <
-          syllables.length - 1
-            ? syllable.sharedToNext.trim()
-            : "";
-
-        const onsetVisible =
-          syllable.hasOnset ||
-          Boolean(previousShared);
-
-        const codaVisible =
-          syllable.hasCoda ||
-          Boolean(nextShared);
-
-        const onsetName =
-          `onset${index}`;
-
-        const sharedName =
-          `shared${index}`;
-
-        if (nextShared) {
-          extraDraws.push(
-            `\\draw (onset${
-              index + 1
-            }) -- (${sharedName});`,
-          );
-        }
-
-        const onsetTree =
-          onsetVisible
-            ? `[O, name=${onsetName} ${
-                syllable.onset
-                  .map(
-                    (segment) =>
-                      `[${escapeLatex(
-                        segment,
-                      )}]`,
-                  )
-                  .join(" ")
-              }]`
-            : "";
-
-        const nucleusTree =
-          `[N ${
-            syllable.nucleus.length >
-            0
-              ? syllable.nucleus
-                  .map(
-                    (segment) =>
-                      segment
-                        ? `[${escapeLatex(
-                            segment,
-                          )}]`
-                        : `[{\\ensuremath{\\varnothing}}]`,
-                  )
-                  .join(" ")
-              : `[{\\ensuremath{\\varnothing}}]`
-          }]`;
-
-        const ownCoda =
-          syllable.coda
-            .map(
-              (segment) =>
-                `[${escapeLatex(
-                  segment,
-                )}]`,
-            )
-            .join(" ");
-
-        const shared =
-          nextShared
-            ? `[${escapeLatex(
-                nextShared,
-              )}, name=${sharedName}]`
-            : "";
-
-        const codaTree =
-          codaVisible
-            ? `[C ${ownCoda} ${shared}]`
-            : "";
-
-        const sigmaOptions =
-          syllable.primary
-            ? ", edge={double}"
-            : "";
-
-        return `[{\\ensuremath{\\sigma}}${sigmaOptions} ${onsetTree} [R ${nucleusTree} ${codaTree}]]`;
-      },
+    tokens.push(
+      `${command}{${base}}`,
     );
+  }
 
-  return `\\begin{forest}
-[${escapeLatex(
-    word.trim() || "Wd",
-  )}
-${syllableTrees.join("\n")}
-]
-${extraDraws.join("\n")}
-\\end{forest}`;
+  Array.from(value).forEach(
+    (character) => {
+      switch (character) {
+        case "̥":
+          wrapLast("\\textsubring");
+          return;
+        case "̬":
+          wrapLast("\\textsubwedge");
+          return;
+        case "̹":
+          wrapLast(
+            "\\textsubrhalfring",
+          );
+          return;
+        case "̜":
+          wrapLast(
+            "\\textsublhalfring",
+          );
+          return;
+        case "̟":
+          wrapLast("\\textsubplus");
+          return;
+        case "̠":
+          wrapLast("\\textsubbar");
+          return;
+        case "̈":
+          wrapLast('\\"');
+          return;
+        case "̽":
+          wrapLast("\\textovercross");
+          return;
+        case "̩":
+          wrapLast("\\textsyllabic");
+          return;
+        case "̯":
+          wrapLast("\\textsubarch");
+          return;
+        case "̴":
+          wrapLast(
+            "\\textsuperimposetilde",
+          );
+          return;
+        case "̝":
+          wrapLast("\\textraising");
+          return;
+        case "̞":
+          wrapLast("\\textlowering");
+          return;
+        case "̘":
+          wrapLast("\\textadvancing");
+          return;
+        case "̙":
+          wrapLast("\\textretracting");
+          return;
+        case "̪":
+          wrapLast("\\textsubbridge");
+          return;
+        case "̺":
+          wrapLast(
+            "\\textinvsubbridge",
+          );
+          return;
+        case "̻":
+          wrapLast("\\textsubsquare");
+          return;
+        case "̃":
+          wrapLast("\\~");
+          return;
+        case "̆":
+          wrapLast("\\u");
+          return;
+        case "̌":
+          wrapLast("\\v");
+          return;
+        case "̂":
+          wrapLast("\\^");
+          return;
+        case "̚": {
+          const base =
+            tokens.pop() ?? "{}";
+
+          tokens.push(
+            `${base}\\textsuperscript{\\textcorner}`,
+          );
+          return;
+        }
+        case "᷄": {
+          const base =
+            tokens.pop() ?? "{}";
+
+          tokens.push(
+            `${base}\\textsuperscript{453}`,
+          );
+          return;
+        }
+        case "᷅": {
+          const base =
+            tokens.pop() ?? "{}";
+
+          tokens.push(
+            `${base}\\textsuperscript{214}`,
+          );
+          return;
+        }
+        case "᷈": {
+          const base =
+            tokens.pop() ?? "{}";
+
+          tokens.push(
+            `${base}\\textsuperscript{35}`,
+          );
+          return;
+        }
+        default:
+          tokens.push(
+            escapeLatex(character),
+          );
+      }
+    },
+  );
+
+  return tokens.join("");
+}
+
+function formatLatexNumber(
+  value: number,
+): string {
+  const rounded =
+    Math.round(value * 1000) /
+    1000;
+
+  return Object.is(rounded, -0)
+    ? "0"
+    : String(rounded);
+}
+
+function pxToBp(
+  value: number,
+): string {
+  return `${formatLatexNumber(
+    value * 0.75,
+  )}bp`;
+}
+
+function latexColorName(
+  key: TreeColorKey,
+): string {
+  return `tree${key
+    .slice(0, 1)
+    .toUpperCase()}${key.slice(1)}`;
+}
+
+function latexHex(
+  value: string,
+): string {
+  return value
+    .replace(/^#/, "")
+    .toUpperCase();
 }
 
 function makeFullLatex(
@@ -1355,111 +1424,784 @@ function makeFullLatex(
     fontSize: number;
     bold: boolean;
     italic: boolean;
-    plainStyle?: boolean;
+    plainStyle: boolean;
+    treeColors: TreeColors;
   },
 ): string {
-  const familyCommand =
-    options.fontChoice ===
-    "monospace"
-      ? "\\ttfamily"
-      : options.fontChoice ===
-          "system-sans"
-        ? "\\sffamily"
-        : "\\rmfamily";
+  const layout = buildLayout(
+    syllables,
+    options.fontSize,
+    options.plainStyle,
+  );
 
-  const series =
+  const plain =
+    options.plainStyle;
+
+  const lineColor = plain
+    ? "black"
+    : latexColorName("line");
+
+  const wordTextColor = plain
+    ? "black"
+    : latexColorName("wordText");
+
+  const syllableTextColor = plain
+    ? "black"
+    : latexColorName(
+        "syllableText",
+      );
+
+  const onsetRhymeTextColor = plain
+    ? "black"
+    : latexColorName(
+        "onsetRhymeText",
+      );
+
+  const nucleusCodaTextColor = plain
+    ? "black"
+    : latexColorName(
+        "nucleusCodaText",
+      );
+
+  const terminalTextColor = plain
+    ? "black"
+    : latexColorName(
+        "terminalText",
+      );
+
+  const sharedTextColor = plain
+    ? "black"
+    : latexColorName(
+        "sharedText",
+      );
+
+  const nodeRadius = Math.max(
+    21,
+    options.fontSize * 0.95,
+  );
+
+  const sigmaRadius =
+    nodeRadius + 3;
+
+  const wordBoxWidth = Math.max(
+    200,
+    Math.min(
+      layout.width * 0.55,
+      word.length *
+        options.fontSize *
+        0.72 +
+        64,
+    ),
+  );
+
+  const wordBoxHeight = Math.max(
+    48,
+    options.fontSize * 2.25,
+  );
+
+  const terminalWidth = Math.max(
+    plain ? 70 : 82,
+    options.fontSize *
+      (plain ? 3.4 : 4.0),
+  );
+
+  const terminalHeight = Math.max(
+    plain ? 40 : 44,
+    options.fontSize *
+      (plain ? 1.9 : 2.05),
+  );
+
+  const segmentSpacing =
+    plain ? 66 : 86;
+
+  const fontSeries =
     options.bold
       ? "\\bfseries"
       : "\\mdseries";
 
-  const shape =
+  const fontShape =
     options.italic
       ? "\\itshape"
       : "\\upshape";
 
-  const lineHeight =
-    Math.round(
-      options.fontSize * 1.25,
+  const pdfLatexFontSetup: Record<
+    FontChoice,
+    {
+      packages: string;
+      command: string;
+    }
+  > = {
+    "system-sans": {
+      packages:
+        "\\usepackage[scaled=0.95]{helvet}",
+      command: "\\sffamily",
+    },
+    "ipa-serif": {
+      packages: "",
+      command: "\\rmfamily",
+    },
+    "traditional-serif": {
+      packages:
+        "\\usepackage{tgpagella}",
+      command: "\\rmfamily",
+    },
+    monospace: {
+      packages:
+        "\\usepackage{courier}",
+      command: "\\ttfamily",
+    },
+  };
+
+  const selectedFont =
+    pdfLatexFontSetup[
+      options.fontChoice
+    ];
+
+  const commands: string[] = [];
+
+  function point(
+    x: number,
+    y: number,
+  ): string {
+    return `(${formatLatexNumber(
+      x,
+    )},${formatLatexNumber(y)})`;
+  }
+
+  function drawLine(
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    width: number,
+  ) {
+    commands.push(
+      `\\draw[draw=${lineColor}, line width=${pxToBp(
+        width,
+      )}, line cap=round] ${point(
+        x1,
+        y1,
+      )} -- ${point(x2, y2)};`,
     );
+  }
+
+  function drawCircle(
+    x: number,
+    y: number,
+    radius: number,
+    fill: string,
+    outline: string,
+  ) {
+    if (plain) {
+      return;
+    }
+
+    commands.push(
+      `\\path[fill=${fill}, draw=${outline}, line width=${pxToBp(
+        2,
+      )}] ${point(
+        x,
+        y,
+      )} circle[radius=${pxToBp(
+        radius,
+      )}];`,
+    );
+  }
+
+  function drawRoundedBox(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    radius: number,
+    fill: string,
+    outline: string,
+    strokeWidth: number,
+  ) {
+    if (plain) {
+      return;
+    }
+
+    commands.push(
+      `\\path[fill=${fill}, draw=${outline}, line width=${pxToBp(
+        strokeWidth,
+      )}, rounded corners=${pxToBp(
+        radius,
+      )}] ${point(
+        x - width / 2,
+        y - height / 2,
+      )} rectangle ${point(
+        x + width / 2,
+        y + height / 2,
+      )};`,
+    );
+  }
+
+  function drawText(
+    x: number,
+    y: number,
+    value: string,
+    size: number,
+    color: string,
+  ) {
+    const lineHeight =
+      size * 1.1;
+
+    commands.push(
+      `\\node[anchor=center, inner sep=0pt, outer sep=0pt, text=${color}, font={\\TreeFont\\fontsize{${pxToBp(
+        size,
+      )}}{${pxToBp(
+        lineHeight,
+      )}}\\selectfont${fontSeries}${fontShape}}] at ${point(
+        x,
+        y,
+      )} {${escapePdfLatex(value)}};`,
+    );
+  }
+
+  commands.push(
+    `\\path[fill=${latexColorName(
+      "canvasBackground",
+    )}, draw=none] ${point(
+      0,
+      0,
+    )} rectangle ${point(
+      layout.width,
+      layout.height,
+    )};`,
+  );
+
+  drawRoundedBox(
+    layout.rootX,
+    layout.rootY,
+    wordBoxWidth,
+    wordBoxHeight,
+    wordBoxHeight / 2,
+    latexColorName("wordFill"),
+    latexColorName("wordOutline"),
+    2,
+  );
+
+  if (word) {
+    drawText(
+      layout.rootX,
+      layout.rootY,
+      word,
+      options.fontSize,
+      wordTextColor,
+    );
+  }
+
+  layout.columns.forEach(
+    (column) => {
+      const wordStartY =
+        layout.rootY +
+        wordBoxHeight / 2 +
+        2;
+
+      const sigmaEndY =
+        layout.sigmaY -
+        sigmaRadius -
+        2;
+
+      if (
+        column.syllable.primary
+      ) {
+        const stressLines =
+          getParallelLines(
+            layout.rootX,
+            wordStartY,
+            column.centerX,
+            sigmaEndY,
+          );
+
+        stressLines.forEach(
+          (line) =>
+            drawLine(
+              line.x1,
+              line.y1,
+              line.x2,
+              line.y2,
+              2.8,
+            ),
+        );
+      } else {
+        drawLine(
+          layout.rootX,
+          wordStartY,
+          column.centerX,
+          sigmaEndY,
+          2.8,
+        );
+      }
+
+      drawCircle(
+        column.centerX,
+        layout.sigmaY,
+        sigmaRadius,
+        latexColorName(
+          "syllableFill",
+        ),
+        latexColorName(
+          "syllableOutline",
+        ),
+      );
+
+      drawText(
+        column.centerX,
+        layout.sigmaY,
+        "σ",
+        options.fontSize + 3,
+        syllableTextColor,
+      );
+
+      if (column.onsetVisible) {
+        drawLine(
+          column.centerX,
+          layout.sigmaY + 25,
+          column.onsetX,
+          layout.branchY - 24,
+          2.7,
+        );
+
+        drawCircle(
+          column.onsetX,
+          layout.branchY,
+          nodeRadius,
+          latexColorName(
+            "onsetRhymeFill",
+          ),
+          latexColorName(
+            "onsetRhymeOutline",
+          ),
+        );
+
+        drawText(
+          column.onsetX,
+          layout.branchY,
+          "O",
+          options.fontSize,
+          onsetRhymeTextColor,
+        );
+
+        column.syllable.onset.forEach(
+          (segment, index) => {
+            const x =
+              column.onsetX -
+              ((column.syllable.onset
+                .length -
+                1) *
+                segmentSpacing) /
+                2 +
+              index * segmentSpacing;
+
+            drawLine(
+              column.onsetX,
+              layout.branchY + 22,
+              x,
+              layout.terminalY - 23,
+              2.5,
+            );
+
+            drawRoundedBox(
+              x,
+              layout.terminalY,
+              terminalWidth,
+              terminalHeight,
+              9,
+              latexColorName(
+                "terminalFill",
+              ),
+              latexColorName(
+                "terminalOutline",
+              ),
+              1,
+            );
+
+            drawText(
+              x,
+              layout.terminalY,
+              segment || "∅",
+              options.fontSize,
+              terminalTextColor,
+            );
+          },
+        );
+      }
+
+      drawLine(
+        column.centerX,
+        layout.sigmaY + 25,
+        column.rhymeX,
+        layout.branchY - 24,
+        2.7,
+      );
+
+      drawCircle(
+        column.rhymeX,
+        layout.branchY,
+        nodeRadius,
+        latexColorName(
+          "onsetRhymeFill",
+        ),
+        latexColorName(
+          "onsetRhymeOutline",
+        ),
+      );
+
+      drawText(
+        column.rhymeX,
+        layout.branchY,
+        "R",
+        options.fontSize,
+        onsetRhymeTextColor,
+      );
+
+      drawLine(
+        column.rhymeX,
+        layout.branchY + 22,
+        column.nucleusX,
+        layout.subbranchY - 23,
+        2.6,
+      );
+
+      drawCircle(
+        column.nucleusX,
+        layout.subbranchY,
+        nodeRadius,
+        latexColorName(
+          "nucleusCodaFill",
+        ),
+        latexColorName(
+          "nucleusCodaOutline",
+        ),
+      );
+
+      drawText(
+        column.nucleusX,
+        layout.subbranchY,
+        "N",
+        options.fontSize,
+        nucleusCodaTextColor,
+      );
+
+      column.syllable.nucleus.forEach(
+        (segment, index) => {
+          const x =
+            column.nucleusX -
+            ((column.syllable.nucleus
+              .length -
+              1) *
+              segmentSpacing) /
+              2 +
+            index * segmentSpacing;
+
+          drawLine(
+            column.nucleusX,
+            layout.subbranchY + 22,
+            x,
+            layout.terminalY - 23,
+            2.5,
+          );
+
+          drawRoundedBox(
+            x,
+            layout.terminalY,
+            terminalWidth,
+            terminalHeight,
+            9,
+            latexColorName(
+              "terminalFill",
+            ),
+            latexColorName(
+              "terminalOutline",
+            ),
+            1,
+          );
+
+          drawText(
+            x,
+            layout.terminalY,
+            segment || "∅",
+            options.fontSize,
+            terminalTextColor,
+          );
+        },
+      );
+
+      if (column.codaVisible) {
+        drawLine(
+          column.rhymeX,
+          layout.branchY + 22,
+          column.codaX,
+          layout.subbranchY - 23,
+          2.6,
+        );
+
+        drawCircle(
+          column.codaX,
+          layout.subbranchY,
+          nodeRadius,
+          latexColorName(
+            "nucleusCodaFill",
+          ),
+          latexColorName(
+            "nucleusCodaOutline",
+          ),
+        );
+
+        drawText(
+          column.codaX,
+          layout.subbranchY,
+          "C",
+          options.fontSize,
+          nucleusCodaTextColor,
+        );
+
+        column.syllable.coda.forEach(
+          (segment, index) => {
+            const x =
+              column.codaX -
+              ((column.syllable.coda
+                .length -
+                1) *
+                segmentSpacing) /
+                2 +
+              index * segmentSpacing;
+
+            drawLine(
+              column.codaX,
+              layout.subbranchY + 22,
+              x,
+              layout.terminalY - 23,
+              2.5,
+            );
+
+            drawRoundedBox(
+              x,
+              layout.terminalY,
+              terminalWidth,
+              terminalHeight,
+              9,
+              latexColorName(
+                "terminalFill",
+              ),
+              latexColorName(
+                "terminalOutline",
+              ),
+              1,
+            );
+
+            drawText(
+              x,
+              layout.terminalY,
+              segment || "∅",
+              options.fontSize,
+              terminalTextColor,
+            );
+          },
+        );
+      }
+    },
+  );
+
+  layout.columns
+    .slice(0, -1)
+    .forEach((column, index) => {
+      const shared =
+        column.syllable.sharedToNext;
+
+      if (!shared) {
+        return;
+      }
+
+      const next =
+        layout.columns[index + 1];
+
+      const sharedX =
+        (column.codaX +
+          next.onsetX) /
+        2;
+
+      drawLine(
+        column.codaX,
+        layout.subbranchY + 22,
+        sharedX,
+        layout.terminalY - 23,
+        2.5,
+      );
+
+      drawLine(
+        next.onsetX,
+        layout.branchY + 22,
+        sharedX,
+        layout.terminalY - 23,
+        2.5,
+      );
+
+      drawRoundedBox(
+        sharedX,
+        layout.terminalY,
+        76,
+        42,
+        9,
+        latexColorName(
+          "sharedFill",
+        ),
+        latexColorName(
+          "sharedOutline",
+        ),
+        1,
+      );
+
+      drawText(
+        sharedX,
+        layout.terminalY,
+        shared,
+        options.fontSize,
+        sharedTextColor,
+      );
+    });
+
+  const colorDefinitions =
+    Object.entries(
+      options.treeColors,
+    ).map(
+      ([key, value]) =>
+        `\\definecolor{${latexColorName(
+          key as TreeColorKey,
+        )}}{HTML}{${latexHex(
+          value,
+        )}}`,
+    ).join("\n");
 
   const unicodeMap = `
-\\usepackage[utf8]{inputenc}
-\\usepackage[T1]{fontenc}
-\\usepackage{textcomp}
-\\usepackage{tipa}
-\\usepackage{newunicodechar}
-\\newunicodechar{ə}{\\textipa{@}}
-\\newunicodechar{ɪ}{\\textipa{I}}
-\\newunicodechar{ʊ}{\\textipa{U}}
-\\newunicodechar{ʌ}{\\textipa{V}}
-\\newunicodechar{æ}{\\textipa{{}}}
-\\newunicodechar{ɑ}{\\textipa{A}}
-\\newunicodechar{ɔ}{\\textipa{O}}
-\\newunicodechar{ɛ}{\\textipa{E}}
-\\newunicodechar{ɚ}{\\textipa{@\\textrhoticity}}
-\\newunicodechar{ɝ}{\\textipa{3\\textrhoticity}}
-\\newunicodechar{ɜ}{\\textipa{3}}
-\\newunicodechar{ɹ}{\\textipa{r\\textturnr}}
-\\newunicodechar{ŋ}{\\textipa{N}}
-\\newunicodechar{θ}{\\textipa{T}}
-\\newunicodechar{ð}{\\textipa{D}}
-\\newunicodechar{ʃ}{\\textipa{S}}
-\\newunicodechar{ʒ}{\\textipa{Z}}
-\\newunicodechar{ʔ}{\\textipa{P}}
-\\newunicodechar{ɾ}{\\textipa{R}}
-\\newunicodechar{ɲ}{\\textipa{J}}
-\\newunicodechar{ʎ}{\\textipa{L}}
-\\newunicodechar{ɬ}{\\textipa{K}}
-\\newunicodechar{ɮ}{\\textipa{K\\!\\textbeltl}}
-\\newunicodechar{ɡ}{g}
-\\newunicodechar{ɸ}{\\textipa{F}}
-\\newunicodechar{β}{\\textipa{B}}
-\\newunicodechar{ç}{\\textipa{C}}
-\\newunicodechar{ʝ}{\\textipa{j\\textctj}}
-\\newunicodechar{χ}{\\textipa{X}}
-\\newunicodechar{ʁ}{\\textipa{R\\!\\textinvscr}}
-\\newunicodechar{ħ}{\\textipa{H}}
-\\newunicodechar{ʕ}{\\textipa{?\\textrevglotstop}}
-\\newunicodechar{ɦ}{\\textipa{h\\textcth}}
-\\newunicodechar{ɳ}{\\textipa{n\\textrtailn}}
-\\newunicodechar{ʈ}{\\textipa{t\\textrtailt}}
-\\newunicodechar{ɖ}{\\textipa{d\\textrtaild}}
-\\newunicodechar{ɭ}{\\textipa{l\\textrtaill}}
-\\newunicodechar{ɻ}{\\textipa{r\\textrtailr}}
-\\newunicodechar{ɽ}{\\textipa{r\\textrtaild}}
+\\newunicodechar{σ}{\\ensuremath{\\sigma}}
+\\newunicodechar{∅}{\\ensuremath{\\varnothing}}
+\\newunicodechar{ə}{\\textschwa}
+\\newunicodechar{ɪ}{\\textsci}
+\\newunicodechar{ʊ}{\\textupsilon}
+\\newunicodechar{ʌ}{\\textturnv}
+\\newunicodechar{æ}{\\ae}
+\\newunicodechar{ɑ}{\\textscripta}
+\\newunicodechar{ɒ}{\\textturnscripta}
+\\newunicodechar{ɔ}{\\textopeno}
+\\newunicodechar{ɛ}{\\textepsilon}
+\\newunicodechar{ɜ}{\\textrevepsilon}
+\\newunicodechar{ɞ}{\\textcloseomega}
+\\newunicodechar{ɐ}{\\textturna}
+\\newunicodechar{ɚ}{\\textrhookschwa}
+\\newunicodechar{ɝ}{\\textrhookrevepsilon}
+\\newunicodechar{ɨ}{\\textbari}
+\\newunicodechar{ʉ}{\\textbaru}
+\\newunicodechar{ɯ}{\\textturnm}
+\\newunicodechar{ʏ}{\\textscy}
+\\newunicodechar{ɘ}{\\textreve}
+\\newunicodechar{ɵ}{\\textbaro}
+\\newunicodechar{ɤ}{\\textramshorns}
+\\newunicodechar{ɶ}{\\textscoelig}
+\\newunicodechar{ɹ}{\\textturnr}
+\\newunicodechar{ɻ}{\\textturnrrtail}
+\\newunicodechar{ɽ}{\\textrtailr}
+\\newunicodechar{ɾ}{\\textfishhookr}
+\\newunicodechar{ŋ}{\\ng}
+\\newunicodechar{ɲ}{\\textltailn}
+\\newunicodechar{ɳ}{\\textrtailn}
+\\newunicodechar{ɴ}{\\textscn}
+\\newunicodechar{ʙ}{\\textscb}
+\\newunicodechar{ʀ}{\\textscr}
+\\newunicodechar{θ}{\\texttheta}
+\\newunicodechar{ð}{\\dh}
+\\newunicodechar{ʃ}{\\textesh}
+\\newunicodechar{ʒ}{\\textyogh}
+\\newunicodechar{ʂ}{\\textrtails}
+\\newunicodechar{ʐ}{\\textrtailz}
+\\newunicodechar{ʔ}{\\textglotstop}
+\\newunicodechar{ɡ}{\\textscriptg}
+\\newunicodechar{ɢ}{\\textscg}
+\\newunicodechar{ɟ}{\\textbardotlessj}
+\\newunicodechar{ɸ}{\\textphi}
+\\newunicodechar{β}{\\textbeta}
+\\newunicodechar{ç}{\\c{c}}
+\\newunicodechar{ʝ}{\\textctj}
+\\newunicodechar{ɣ}{\\textgamma}
+\\newunicodechar{χ}{\\textchi}
+\\newunicodechar{ʁ}{\\textinvscr}
+\\newunicodechar{ħ}{\\textcrh}
+\\newunicodechar{ʕ}{\\textrevglotstop}
+\\newunicodechar{ɦ}{\\texthth}
+\\newunicodechar{ɬ}{\\textbeltl}
+\\newunicodechar{ɮ}{\\textlyoghlig}
+\\newunicodechar{ʋ}{\\textscriptv}
+\\newunicodechar{ɰ}{\\textturnmrleg}
+\\newunicodechar{ɭ}{\\textrtaill}
+\\newunicodechar{ʎ}{\\textturny}
+\\newunicodechar{ʟ}{\\textscl}
+\\newunicodechar{ʍ}{\\textturnw}
+\\newunicodechar{ɥ}{\\textturnh}
+\\newunicodechar{ʜ}{\\textsch}
+\\newunicodechar{ʢ}{\\textinvglotstop}
+\\newunicodechar{ʡ}{\\textbarglotstop}
+\\newunicodechar{ɕ}{\\textctc}
+\\newunicodechar{ʑ}{\\textctz}
+\\newunicodechar{ɺ}{\\textturnlonglegr}
+\\newunicodechar{ɧ}{\\texthvlig}
+\\newunicodechar{ɫ}{\\textltilde}
+\\newunicodechar{ɓ}{\\texthtb}
+\\newunicodechar{ɗ}{\\texthtd}
+\\newunicodechar{ʄ}{\\texthtbardotlessj}
+\\newunicodechar{ɠ}{\\texthtg}
+\\newunicodechar{ʛ}{\\texthtscg}
+\\newunicodechar{ʘ}{\\textbullseye}
+\\newunicodechar{ǀ}{\\textpipe}
+\\newunicodechar{ǃ}{!}
+\\newunicodechar{ǂ}{\\textdoublebarpipe}
+\\newunicodechar{ǁ}{\\textdoublepipe}
+\\newunicodechar{ˈ}{\\textprimstress}
+\\newunicodechar{ˌ}{\\textsecstress}
+\\newunicodechar{ː}{\\textlengthmark}
+\\newunicodechar{ˑ}{\\texthalflength}
+\\newunicodechar{ʼ}{'}
 \\newunicodechar{ʰ}{\\textsuperscript{h}}
 \\newunicodechar{ʷ}{\\textsuperscript{w}}
 \\newunicodechar{ʲ}{\\textsuperscript{j}}
-\\newunicodechar{ː}{:}
-\\newunicodechar{ˑ}{;}
-\\newunicodechar{̃}{\\~{}}
-\\newunicodechar{̩}{\\textsubring}
-\\newunicodechar{̯}{\\textsubarch}
-\\newunicodechar{ʼ}{'}
+\\newunicodechar{ˠ}{\\textsuperscript{\\textgamma}}
+\\newunicodechar{ˤ}{\\textsuperscript{\\textrevglotstop}}
+\\newunicodechar{ⁿ}{\\textsuperscript{n}}
+\\newunicodechar{ˡ}{\\textsuperscript{l}}
+\\newunicodechar{↑}{\\ensuremath{\\uparrow}}
+\\newunicodechar{↓}{\\ensuremath{\\downarrow}}
+\\newunicodechar{ꜛ}{\\textupstep}
+\\newunicodechar{ꜜ}{\\textdownstep}
+\\newunicodechar{˥}{\\textsuperscript{5}}
+\\newunicodechar{˦}{\\textsuperscript{4}}
+\\newunicodechar{˧}{\\textsuperscript{3}}
+\\newunicodechar{˨}{\\textsuperscript{2}}
+\\newunicodechar{˩}{\\textsuperscript{1}}
 `;
 
   return `% Compile with pdfLaTeX.
-\\documentclass[tikz,border=12pt]{standalone}
-${unicodeMap}\\usepackage{forest}
-\\forestset{%
-  syllable tree/.style={%
-    for tree={%
-      align=center,%
-      parent anchor=south,%
-      child anchor=north,%
-      l sep=24pt,%
-      s sep=18pt,%
-      inner sep=1.8pt,%
-      font=${familyCommand}\\fontsize{${options.fontSize}}{${lineHeight}}\\selectfont${series}${shape}%
-    }%
-  }%
-}
+\\documentclass[tikz,border=0pt]{standalone}
+\\usepackage[utf8]{inputenc}
+\\usepackage[T1]{fontenc}
+\\usepackage{textcomp}
+\\usepackage{amsmath,amssymb}
+\\usepackage{tipa}
+\\usepackage{newunicodechar}
+\\usepackage{tikz}
+${selectedFont.packages}
+${colorDefinitions}
+${unicodeMap}
+\\newcommand{\\TreeFont}{${selectedFont.command}}
 \\begin{document}
-\\begin{forest} syllable tree
-${makeLatexTree(word, syllables)
-  .replace("\\begin{forest}\n", "")
-  .replace("\n\\end{forest}", "")}
-\\end{forest}
+\\begin{tikzpicture}[x=0.75bp,y=-0.75bp]
+\\path[use as bounding box] (0,0) rectangle (${formatLatexNumber(
+    layout.width,
+  )},${formatLatexNumber(
+    layout.height,
+  )});
+${commands.join("\n")}
+\\end{tikzpicture}
 \\end{document}
 `;
 }
@@ -3175,6 +3917,11 @@ function App() {
       index: targetIndex,
     });
     setReplaceOnNextIpa(true);
+    setIpaGroup(
+      targetField === "nucleus"
+        ? "Vowels"
+        : "Pulmonic consonants",
+    );
     setIpaOpen(true);
     setStatus(
       sameBranch
@@ -3337,6 +4084,63 @@ function App() {
     );
   }
 
+  function openIpaForBranch(
+    syllableId: string,
+    field: SegmentField,
+  ) {
+    setIpaGroup(
+      field === "nucleus"
+        ? "Vowels"
+        : "Pulmonic consonants",
+    );
+
+    const syllableIndex =
+      syllables.findIndex(
+        (syllable) =>
+          syllable.id === syllableId,
+      );
+
+    const syllable =
+      syllables[syllableIndex];
+
+    let sound: ActiveSound = {
+      type: "segment",
+      syllableId,
+      field,
+      index: 0,
+    };
+
+    if (
+      field === "coda" &&
+      syllable?.coda.length === 0 &&
+      syllable.sharedToNext.trim()
+    ) {
+      sound = {
+        type: "shared",
+        syllableId,
+      };
+    } else if (
+      field === "onset" &&
+      syllableIndex > 0 &&
+      syllable?.onset.length === 0 &&
+      syllables[
+        syllableIndex - 1
+      ].sharedToNext.trim()
+    ) {
+      sound = {
+        type: "shared",
+        syllableId:
+          syllables[
+            syllableIndex - 1
+          ].id,
+      };
+    }
+
+    setActiveSound(sound);
+    setReplaceOnNextIpa(true);
+    setIpaOpen(true);
+  }
+
   function selectSound(
     sound: ActiveSound,
   ) {
@@ -3348,6 +4152,11 @@ function App() {
       sound?.type ===
       "segment"
     ) {
+      setIpaGroup(
+        sound.field === "nucleus"
+          ? "Vowels"
+          : "Pulmonic consonants",
+      );
       setSelectedItem({
         type: "segment",
         syllableId:
@@ -3358,6 +4167,9 @@ function App() {
     } else if (
       sound?.type === "shared"
     ) {
+      setIpaGroup(
+        "Pulmonic consonants",
+      );
       setSelectedItem({
         type: "shared",
         syllableId:
@@ -3877,6 +4689,9 @@ function App() {
       syllableId: leftId,
     });
 
+    setIpaGroup(
+      "Pulmonic consonants",
+    );
     setIpaOpen(true);
 
     setStatus(
@@ -3952,8 +4767,10 @@ function App() {
           field:
             dragState.field,
         });
-        setActiveSound(null);
-        setIpaOpen(false);
+        openIpaForBranch(
+          dragState.syllableId,
+          dragState.field,
+        );
 
         setStatus(
           moved
@@ -4412,6 +5229,7 @@ function App() {
         italic:
           treeItalic,
         plainStyle,
+        treeColors,
       },
     );
   }
@@ -4427,7 +5245,7 @@ function App() {
       `${safeFilename()}-tree.tex`,
     );
     setStatus(
-      "Complete LaTeX document downloaded.",
+      "Complete TikZ LaTeX document downloaded.",
     );
   }
 
@@ -4441,7 +5259,7 @@ function App() {
       );
 
       setStatus(
-        "Complete LaTeX document copied.",
+        "Complete TikZ LaTeX document copied.",
       );
     } catch {
       const textarea =
@@ -4460,7 +5278,7 @@ function App() {
       textarea.remove();
 
       setStatus(
-        "Complete LaTeX document copied.",
+        "Complete TikZ LaTeX document copied.",
       );
     }
   }
@@ -6151,6 +6969,10 @@ function App() {
                             field:
                               "onset",
                           });
+                          openIpaForBranch(
+                            column.syllable.id,
+                            "onset",
+                          );
                           setStatus(
                             "Onset added.",
                           );
@@ -6353,8 +7175,10 @@ function App() {
                           field:
                             "nucleus",
                         });
-                        setActiveSound(null);
-                        setIpaOpen(false);
+                        openIpaForBranch(
+                          column.syllable.id,
+                          "nucleus",
+                        );
                       }}
                     />
 
@@ -6735,6 +7559,10 @@ function App() {
                             field:
                               "coda",
                           });
+                          openIpaForBranch(
+                            column.syllable.id,
+                            "coda",
+                          );
                           setStatus(
                             "Coda added.",
                           );
